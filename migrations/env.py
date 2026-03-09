@@ -17,7 +17,6 @@ if _env_file.exists():
     from dotenv import load_dotenv
     load_dotenv(_env_file)
 
-from sqlalchemy import engine_from_config
 from sqlalchemy import pool
 from alembic import context
 
@@ -25,15 +24,13 @@ from src.db.models import Base
 from src.db.connection import _get_database_url
 
 config = context.config
-if config.config_file_name is not None:
-    config.set_main_option("sqlalchemy.url", _get_database_url())
-
 target_metadata = Base.metadata
 
 
 def run_migrations_offline() -> None:
     """Запуск миграций в offline режиме."""
-    url = config.get_main_option("sqlalchemy.url")
+    # URL берём напрямую, чтобы избежать ConfigParser interpolation (пароль с %)
+    url = _get_database_url()
     context.configure(
         url=url,
         target_metadata=target_metadata,
