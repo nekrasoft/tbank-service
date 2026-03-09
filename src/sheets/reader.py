@@ -83,11 +83,9 @@ def read_works(
     else:
         worksheet = spreadsheet.sheet1
 
-    all_columns = schema.get("google_sheet_columns", [])
-    try:
-        records = worksheet.get_all_records(expected_headers=all_columns)
-    except TypeError:
-        records = worksheet.get_all_records()
+    # Не используем expected_headers — заголовки в таблице могут отличаться/отсутствовать.
+    # Нужные поля извлекаются через row.get() по имени колонки.
+    records = worksheet.get_all_records()
 
     works = []
     for row in records:
