@@ -75,18 +75,18 @@ def main() -> None:
         due_date = today + timedelta(days=14)
 
         # T-Bank API
-        resp = send_invoice(
-            invoice_number=inv_num,
-            due_date=due_date,
-            invoice_date=today,
-            payer_name=cp.name,
-            payer_inn=cp.inn,
-            payer_kpp=cp.kpp or "",
-            items=items,
-            email=cp.email,
-            contact_phone=cp.phone if cp.phone else None,
-        )
-        tbank_id = resp.get("invoiceId") or resp.get("id")
+        # resp = send_invoice(
+        #     invoice_number=inv_num,
+        #     due_date=due_date,
+        #     invoice_date=today,
+        #     payer_name=cp.name,
+        #     payer_inn=cp.inn,
+        #     payer_kpp=cp.kpp or "",
+        #     items=items,
+        #     email=cp.email,
+        #     contact_phone=cp.phone if cp.phone else None,
+        # )
+        tbank_id = "1234567890" #resp.get("invoiceId") or resp.get("id")
         time.sleep(0.3)  # Ограничение 4 req/sec
 
         # Сохранение в БД
