@@ -3,6 +3,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
 import os
@@ -66,17 +67,21 @@ def send_invoice_notification(
     text = "\n".join(lines)
 
     bot = Bot(token=token)
-    try:
+
+    async def _send() -> None:
         if act_pdf_path and Path(act_pdf_path).exists():
             with open(act_pdf_path, "rb") as f:
-                bot.send_document(
+                await bot.send_document(
                     chat_id=chat_id,
                     document=f,
                     filename=f"Акт_{invoice_number}.pdf",
                     caption=text,
                 )
         else:
-            bot.send_message(chat_id=chat_id, text=text)
+            await bot.send_message(chat_id=chat_id, text=text)
+
+    try:
+        asyncio.run(_send())
         logger.info("Telegram: уведомление отправлено в чат %s", chat_id)
         return True
     except Exception as e:
@@ -118,16 +123,20 @@ def send_invoice_notification_bytes(
     text = "\n".join(lines)
 
     bot = Bot(token=token)
-    try:
+
+    async def _send() -> None:
         if act_pdf_bytes:
-            bot.send_document(
+            await bot.send_document(
                 chat_id=chat_id,
                 document=io.BytesIO(act_pdf_bytes),
                 filename=f"Акт_{invoice_number}.pdf",
                 caption=text,
             )
         else:
-            bot.send_message(chat_id=chat_id, text=text)
+            await bot.send_message(chat_id=chat_id, text=text)
+
+    try:
+        asyncio.run(_send())
         logger.info("Telegram: уведомление отправлено в чат %s", chat_id)
         return True
     except Exception as e:
