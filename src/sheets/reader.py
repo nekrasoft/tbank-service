@@ -83,9 +83,21 @@ def read_works(
     else:
         worksheet = spreadsheet.sheet1
 
-    # Не используем expected_headers — заголовки в таблице могут отличаться/отсутствовать.
-    # Нужные поля извлекаются через row.get() по имени колонки.
-    records = worksheet.get_all_records()
+    # Только нужные колонки — обходит дубликаты/пустые заголовки в строке заголовков.
+    required_headers = ["Дата", "Контрагент", "Примечание", "Структура", "Операция", "Объект"]
+    try:
+        records = worksheet.get_all_records(expected_headers=required_headers)
+    except Exception:
+        # Если expected_headers не совпадают с таблицей — читаем все значения и парсим вручную.
+        values = worksheet.get_all_values()
+        if not values or len(values) < 2:
+            return []
+        header_row = values[0]
+        col_indices = {h: i for i, h in enumerate(header_row) if h in required_headers}
+        records = []
+        for row in values[1:]:
+            rec = {h: row[col_indices[h]] if h in col_indices and len(row) > col_indices[h] else "" for h in required_headers}
+            records.append(rec)
 
     works = []
     for row in records:
