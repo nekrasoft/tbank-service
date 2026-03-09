@@ -88,14 +88,22 @@ def read_works(
     try:
         records = worksheet.get_all_records(expected_headers=required_headers)
     except Exception:
-        # Если expected_headers не совпадают с таблицей — читаем все значения и парсим вручную.
+        # Если expected_headers не совпадают — читаем вручную: ищем строку с заголовками.
         values = worksheet.get_all_values()
         if not values or len(values) < 2:
             return []
-        header_row = values[0]
+        header_row_idx = None
+        for idx, row in enumerate(values):
+            cells = [str(c).strip() if c else "" for c in row]
+            if "Дата" in cells:
+                header_row_idx = idx
+                break
+        if header_row_idx is None:
+            return []
+        header_row = [str(c).strip() if c else "" for c in values[header_row_idx]]
         col_indices = {h: i for i, h in enumerate(header_row) if h in required_headers}
         records = []
-        for row in values[1:]:
+        for row in values[header_row_idx + 1 :]:
             rec = {h: row[col_indices[h]] if h in col_indices and len(row) > col_indices[h] else "" for h in required_headers}
             records.append(rec)
 
