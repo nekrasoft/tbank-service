@@ -16,7 +16,7 @@ def get_by_id(session: Session, counterparty_id: int) -> Counterparty | None:
 def get_by_name_and_note(
     session: Session, name: str, note: str
 ) -> Counterparty | None:
-    """Получение контрагента по имени и примечанию (для матчинга с works)."""
+    """Получение контрагента по полному имени и примечанию."""
     note_val = note or ""
     result = session.execute(
         select(Counterparty)
@@ -26,9 +26,22 @@ def get_by_name_and_note(
     return result.scalars().first()
 
 
+def get_by_short_name_and_note(
+    session: Session, short_name: str, note: str
+) -> Counterparty | None:
+    """Получение контрагента по короткому имени и примечанию (для матчинга с works)."""
+    note_val = note or ""
+    result = session.execute(
+        select(Counterparty)
+        .where(Counterparty.short_name == short_name)
+        .where(func.coalesce(Counterparty.note, "") == note_val)
+    )
+    return result.scalars().first()
+
+
 def get_all(session: Session) -> list[Counterparty]:
     """Получение всех контрагентов."""
-    result = session.execute(select(Counterparty).order_by(Counterparty.name))
+    result = session.execute(select(Counterparty).order_by(Counterparty.short_name))
     return list(result.scalars().all())
 
 
@@ -36,6 +49,7 @@ def create(
     session: Session,
     *,
     name: str,
+    short_name: str,
     inn: str,
     kpp: str | None = None,
     email: str | None = None,
@@ -45,6 +59,7 @@ def create(
     """Создание контрагента."""
     cp = Counterparty(
         name=name,
+        short_name=short_name,
         inn=inn,
         kpp=kpp or "",
         email=email or "",

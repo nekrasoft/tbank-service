@@ -1,6 +1,7 @@
 """
 CLI: ручное выставление счёта для одного контрагента.
 Запуск: python -m src.cli.manual --counterparty "Алтай-Строй" --note "Ердякова 9"
+--counterparty ожидает короткое имя контрагента (short_name).
 """
 from __future__ import annotations
 
@@ -27,7 +28,7 @@ logger = logging.getLogger(__name__)
 def main() -> None:
     """Ручное выставление счёта."""
     parser = argparse.ArgumentParser(description="Выставить счёт контрагенту")
-    parser.add_argument("--counterparty", "-c", required=True, help="Наименование контрагента")
+    parser.add_argument("--counterparty", "-c", required=True, help="Короткое имя контрагента (short_name)")
     parser.add_argument("--note", "-n", default="", help="Примечание (для матчинга)")
     args = parser.parse_args()
 
@@ -44,12 +45,12 @@ def main() -> None:
 
     session = get_session()
     try:
-        # Поиск контрагента
-        cp = cp_repo.get_by_name_and_note(session, args.counterparty, args.note)
+        # Поиск контрагента по короткому имени
+        cp = cp_repo.get_by_short_name_and_note(session, args.counterparty, args.note)
         if not cp:
             logger.error(
                 "Контрагент не найден: %s (примечание: %s). "
-                "Добавьте в таблицу counterparties.",
+                "Проверьте short_name в таблице counterparties.",
                 args.counterparty,
                 args.note or "(пусто)",
             )

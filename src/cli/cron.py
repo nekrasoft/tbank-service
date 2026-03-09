@@ -70,7 +70,7 @@ def main() -> None:
 
         for counterparty_name, note in groups:
             try:
-                cp = cp_repo.get_by_name_and_note(session, counterparty_name, note)
+                cp = cp_repo.get_by_short_name_and_note(session, counterparty_name, note)
                 if not cp:
                     logger.warning(
                         "Контрагент не найден в справочнике: %s (примечание: %s) — пропуск",
