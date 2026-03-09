@@ -28,15 +28,16 @@ def sync_sheets_to_mysql(
 ) -> int:
     """
     Синхронизация работ из Google Sheets в MySQL.
-    Дедупликация по sheet_row_hash.
+    Читает только строки с датой >= последней импортированной. Дедупликация по sheet_row_hash.
     Возвращает количество добавленных строк.
     """
-    rows = read_works(sheet_url=sheet_url, sheet_name=sheet_name)
+    session = get_session()
+    last_date = works_repo.get_max_date(session)
+    rows = read_works(sheet_url=sheet_url, sheet_name=sheet_name, last_date=last_date)
     if not rows:
         logger.info("Синхронизация: в таблице нет строк для импорта")
         return 0
 
-    session = get_session()
     added = 0
     try:
         for row in rows:

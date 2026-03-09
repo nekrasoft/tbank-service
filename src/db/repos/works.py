@@ -35,6 +35,13 @@ def get_all_uninvoiced_groups(session: Session) -> list[tuple[str, str]]:
     return [(row[0], row[1] or "") for row in result.all()]
 
 
+def get_max_date(session: Session) -> date | None:
+    """Максимальная дата среди импортированных работ (для инкрементального чтения)."""
+    result = session.execute(select(func.max(Work.date)))
+    value = result.scalar()
+    return value if value else None
+
+
 def exists_by_hash(session: Session, sheet_row_hash: str) -> bool:
     """Проверка существования работы по хешу (дедупликация)."""
     result = session.execute(

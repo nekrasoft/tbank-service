@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import hashlib
+from datetime import date, datetime
 import json
 import logging
 import os
@@ -50,6 +51,14 @@ def _parse_sheet_url(url: str) -> tuple[str, int | None]:
     return sheet_id, gid
 
 
+def _parse_date_safe(date_str: str) -> datetime | None:
+    """Парсинг DD.MM.YYYY, возвращает None при ошибке."""
+    try:
+        return datetime.strptime(date_str.strip(), "%d.%m.%Y")
+    except (ValueError, AttributeError):
+        return None
+
+
 def get_sheets_client() -> gspread.Client:
     """Создание клиента gspread."""
     creds_path = os.environ.get("GOOGLE_CREDENTIALS_PATH", str(CREDENTIALS_PATH))
@@ -60,9 +69,11 @@ def get_sheets_client() -> gspread.Client:
 def read_works(
     sheet_url: str | None = None,
     sheet_name: str | None = None,
+    last_date: date | None = None,
 ) -> list[dict]:
     """
-    Чтение всех строк-работ из Google Sheets.
+    Чтение строк-работ из Google Sheets.
+    При last_date обрабатываются только строки с датой >= last_date.
 
     Возвращает список словарей с ключами:
     date, counterparty_name, note, structure, operation, object_count, sheet_row_hash
@@ -113,6 +124,9 @@ def read_works(
         if not date_val or not str(date_val).strip():
             continue
         date_str = str(date_val).strip()
+        parsed = _parse_date_safe(date_str)
+        if last_date and parsed is not None and parsed.date() < last_date:
+            continue
         counterparty = str(row.get("Контрагент", "") or "").strip()
         note = str(row.get("Примечание", "") or "").strip()
         structure = str(row.get("Структура", "") or "").strip()
