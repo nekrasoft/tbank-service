@@ -26,15 +26,14 @@ def get_by_name_and_note(
     return result.scalars().first()
 
 
-def get_by_short_name_and_note(
+def get_by_short_name(
     session: Session, short_name: str, note: str
 ) -> Counterparty | None:
-    """Получение контрагента по короткому имени и примечанию (для матчинга с works)."""
+    """Получение контрагента по короткому имени."""
     note_val = note or ""
     result = session.execute(
         select(Counterparty)
         .where(Counterparty.short_name == short_name)
-        .where(func.coalesce(Counterparty.note, "") == note_val)
     )
     return result.scalars().first()
 

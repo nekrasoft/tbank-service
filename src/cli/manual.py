@@ -46,7 +46,7 @@ def main() -> None:
     session = get_session()
     try:
         # Поиск контрагента по короткому имени
-        cp = cp_repo.get_by_short_name_and_note(session, args.counterparty, args.note)
+        cp = cp_repo.get_by_short_name(session, args.counterparty, args.note)
         if not cp:
             logger.error(
                 "Контрагент не найден: %s (примечание: %s). "
