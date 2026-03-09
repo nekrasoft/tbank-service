@@ -117,6 +117,8 @@ def read_works(
         note = str(row.get("Примечание", "") or "").strip()
         structure = str(row.get("Структура", "") or "").strip()
         operation = str(row.get("Операция", "") or "").strip()
+        if operation != "Поступление по основной деятельности":
+            continue
         object_count = str(row.get("Объект", "") or "1").strip() or "1"
 
         sheet_row_hash = hashlib.sha256(
