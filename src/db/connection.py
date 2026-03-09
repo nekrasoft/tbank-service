@@ -3,6 +3,22 @@
 """
 from __future__ import annotations
 
+# Обход: OpenSSL на некоторых системах не поддерживает usedforsecurity в md5().
+# PyMySQL/cryptography при аутентификации вызывают hashlib.md5(usedforsecurity=False).
+import hashlib
+
+_orig_md5 = hashlib.md5
+
+
+def _patched_md5(data: bytes = b"", *, usedforsecurity: bool = True):
+    try:
+        return _orig_md5(data, usedforsecurity=usedforsecurity)
+    except TypeError:
+        return hashlib.new("md5", data)
+
+
+hashlib.md5 = _patched_md5  # type: ignore[assignment]
+
 import os
 from pathlib import Path
 
