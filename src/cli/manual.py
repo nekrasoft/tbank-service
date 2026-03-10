@@ -38,7 +38,6 @@ def main() -> None:
     from src.db.repos import invoice_number as num_repo
     from src.db.repos import works as works_repo
     from src.invoice.builder import build_invoice_items
-    from src.invoice.act_generator import generate_act_pdf
     from src.notifications.telegram import send_invoice_notification_bytes
     from src.tbank.client import send_invoice
     import time
@@ -113,18 +112,10 @@ def main() -> None:
         )
         session.commit()
 
-        # Акт и Telegram
-        act_pdf = generate_act_pdf(
-            counterparty_name=cp.name,
-            invoice_number=inv_num,
-            invoice_date=today,
-            items=items,
-        )
         send_invoice_notification_bytes(
             counterparty_name=cp.name,
             invoice_number=inv_num,
             tbank_invoice_id=str(tbank_id) if tbank_id else None,
-            act_pdf_bytes=act_pdf,
         )
 
         logger.info("Счёт %s успешно выставлен для %s", inv_num, cp.name)

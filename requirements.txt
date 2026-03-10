@@ -13,8 +13,5 @@ httpx>=0.27.0
 # Telegram
 python-telegram-bot>=21.0
 
-# Генерация PDF (акт)
-reportlab>=4.0.0
-
 # Конфигурация
 python-dotenv>=1.0.0

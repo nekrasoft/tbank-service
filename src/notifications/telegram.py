@@ -4,10 +4,8 @@
 from __future__ import annotations
 
 import asyncio
-import io
 import logging
 import os
-from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +32,6 @@ def send_invoice_notification(
     invoice_number: str,
     tbank_invoice_id: str | None = None,
     invoice_link: str | None = None,
-    act_pdf_path: str | Path | None = None,
 ) -> bool:
     """
     Отправка уведомления бухгалтерам о выставленном счёте.
@@ -43,7 +40,6 @@ def send_invoice_notification(
     :param invoice_number: Номер счёта
     :param tbank_invoice_id: ID счёта в T-Bank
     :param invoice_link: Ссылка на оплату (если есть)
-    :param act_pdf_path: Путь к PDF акта для отправки
     :return: True при успехе
     """
     try:
@@ -69,16 +65,7 @@ def send_invoice_notification(
     bot = Bot(token=token)
 
     async def _send() -> None:
-        if act_pdf_path and Path(act_pdf_path).exists():
-            with open(act_pdf_path, "rb") as f:
-                await bot.send_document(
-                    chat_id=chat_id,
-                    document=f,
-                    filename=f"Акт_{invoice_number}.pdf",
-                    caption=text,
-                )
-        else:
-            await bot.send_message(chat_id=chat_id, text=text)
+        await bot.send_message(chat_id=chat_id, text=text)
 
     try:
         asyncio.run(_send())
@@ -95,50 +82,19 @@ def send_invoice_notification_bytes(
     invoice_number: str,
     tbank_invoice_id: str | None = None,
     invoice_link: str | None = None,
-    act_pdf_bytes: bytes | None = None,
 ) -> bool:
     """
-    Отправка уведомления с PDF акта из bytes (без сохранения в файл).
+    Отправка уведомления бухгалтерам о выставленном счёте.
 
-    :param act_pdf_bytes: PDF акта в виде bytes
+    :param counterparty_name: Наименование контрагента
+    :param invoice_number: Номер счёта
+    :param tbank_invoice_id: ID счёта в T-Bank
+    :param invoice_link: Ссылка на оплату (если есть)
+    :return: True при успехе
     """
-    try:
-        from telegram import Bot
-    except ImportError:
-        logger.warning("python-telegram-bot не установлен — уведомление не отправлено")
-        return False
-
-    token = _get_bot_token()
-    chat_id = _get_accountants_chat_id()
-
-    lines = [
-        "📋 Выставлен счёт",
-        f"Контрагент: {counterparty_name}",
-        f"Номер счёта: {invoice_number}",
-    ]
-    if tbank_invoice_id:
-        lines.append(f"T-Bank ID: {tbank_invoice_id}")
-    if invoice_link:
-        lines.append(f"Ссылка: {invoice_link}")
-    text = "\n".join(lines)
-
-    bot = Bot(token=token)
-
-    async def _send() -> None:
-        if act_pdf_bytes:
-            await bot.send_document(
-                chat_id=chat_id,
-                document=io.BytesIO(act_pdf_bytes),
-                filename=f"Акт_{invoice_number}.pdf",
-                caption=text,
-            )
-        else:
-            await bot.send_message(chat_id=chat_id, text=text)
-
-    try:
-        asyncio.run(_send())
-        logger.info("Telegram: уведомление отправлено в чат %s", chat_id)
-        return True
-    except Exception as e:
-        logger.error("Telegram: ошибка отправки — %s", e)
-        return False
+    return send_invoice_notification(
+        counterparty_name=counterparty_name,
+        invoice_number=invoice_number,
+        tbank_invoice_id=tbank_invoice_id,
+        invoice_link=invoice_link,
+    )

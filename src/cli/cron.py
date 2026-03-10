@@ -44,7 +44,6 @@ def main() -> None:
     from src.db.repos import invoice_number as num_repo
     from src.db.repos import works as works_repo
     from src.invoice.builder import build_invoice_items
-    from src.invoice.act_generator import generate_act_pdf
     from src.notifications.telegram import send_invoice_notification_bytes
     from src.sheets.sync import sync_sheets_to_mysql
     from src.tbank.client import send_invoice
@@ -130,17 +129,10 @@ def main() -> None:
                     )
                 works_repo.update_invoice_id(session, [w.id for w in works], inv.id)
 
-                act_pdf = generate_act_pdf(
-                    counterparty_name=cp.name,
-                    invoice_number=inv_num,
-                    invoice_date=today,
-                    items=items,
-                )
                 send_invoice_notification_bytes(
                     counterparty_name=cp.name,
                     invoice_number=inv_num,
                     tbank_invoice_id=str(tbank_id) if tbank_id else None,
-                    act_pdf_bytes=act_pdf,
                 )
                 issued += 1
                 logger.info("Счёт %s выставлен для %s", inv_num, cp.name)
