@@ -9,7 +9,7 @@ import calendar
 import logging
 import sys
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -31,12 +31,49 @@ TBANK_DELAY_SEC = 0.3
 # Временный override для дебага: все счета отправляются на этот email.
 DEBUG_FORCE_EMAIL = "nekrasoft.kirov@gmail.com"
 
+# Окна выставления для периодичности.
+MONTHLY_EVENING_START_HOUR = 21
+BIWEEKLY_MIDMONTH_DAY = 15
+BIWEEKLY_MORNING_START_HOUR = 8
+BIWEEKLY_MORNING_END_HOUR = 12
 
-def _is_last_day_of_month() -> bool:
-    """Проверка: сегодня последний день месяца."""
-    today = date.today()
-    _, last_day = calendar.monthrange(today.year, today.month)
-    return today.day == last_day
+
+def _is_last_day_of_month(target_date: date) -> bool:
+    """Проверка: переданная дата — последний день месяца."""
+    _, last_day = calendar.monthrange(target_date.year, target_date.month)
+    return target_date.day == last_day
+
+
+def _is_counterparty_due(invoice_schedule: str | None, run_at: datetime) -> bool:
+    """
+    Проверка, должен ли контрагент выставляться в текущий запуск.
+
+    Поддерживаемые значения:
+    - monthly: последний день месяца, после 21:00
+    - 2weeks: последний день месяца или 15 число утром (08:00-11:59)
+    - daily: в любой запуск
+    """
+    schedule = (invoice_schedule or "monthly").strip().lower()
+
+    if schedule == "daily":
+        return True
+
+    if schedule == "monthly":
+        return _is_last_day_of_month(run_at.date()) and run_at.hour >= MONTHLY_EVENING_START_HOUR
+
+    if schedule == "2weeks":
+        if _is_last_day_of_month(run_at.date()):
+            return True
+        return (
+            run_at.day == BIWEEKLY_MIDMONTH_DAY
+            and BIWEEKLY_MORNING_START_HOUR <= run_at.hour < BIWEEKLY_MORNING_END_HOUR
+        )
+
+    logger.warning(
+        "Неизвестный invoice_schedule='%s', используем monthly-правило",
+        invoice_schedule,
+    )
+    return _is_last_day_of_month(run_at.date()) and run_at.hour >= MONTHLY_EVENING_START_HOUR
 
 
 def _get_uninvoiced_counterparties() -> list[str]:
@@ -51,7 +88,7 @@ def _get_uninvoiced_counterparties() -> list[str]:
         session.close()
 
 
-def _prepare_pending_invoice(counterparty_name: str) -> dict[str, Any] | None:
+def _prepare_pending_invoice(counterparty_name: str, run_at: datetime) -> dict[str, Any] | None:
     """Подготовка и фиксация pending-счёта в БД до вызова внешнего API."""
     from src.db.connection import get_session
     from src.db.repos import counterparties as cp_repo
@@ -67,6 +104,13 @@ def _prepare_pending_invoice(counterparty_name: str) -> dict[str, Any] | None:
             logger.warning(
                 "Контрагент не найден: %s — пропуск",
                 counterparty_name,
+            )
+            return None
+        if not _is_counterparty_due(cp.invoice_schedule, run_at):
+            logger.info(
+                "Контрагент %s (schedule=%s): вне окна выставления — пропуск",
+                counterparty_name,
+                cp.invoice_schedule,
             )
             return None
 
@@ -189,12 +233,9 @@ def main() -> None:
     from src.sheets.sync import sync_sheets_to_mysql
     from src.tbank.client import send_invoice
 
-    # Опционально: проверка последнего дня месяца
-    # if not _is_last_day_of_month():
-    #     logger.info("Сегодня не последний день месяца — выход")
-    #     return
-
     # 1. Синхронизация Sheets → MySQL
+    run_at = datetime.now()
+    logger.info("Время запуска крона: %s", run_at.strftime("%Y-%m-%d %H:%M:%S"))
     logger.info("Синхронизация Sheets → MySQL...")
     sync_sheets_to_mysql()
 
@@ -209,7 +250,7 @@ def main() -> None:
         prepared: dict[str, Any] | None = None
         sent_to_tbank = False
         try:
-            prepared = _prepare_pending_invoice(counterparty_name)
+            prepared = _prepare_pending_invoice(counterparty_name, run_at)
             if not prepared:
                 continue
 

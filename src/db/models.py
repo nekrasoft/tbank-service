@@ -35,6 +35,12 @@ class Counterparty(Base):
     email = Column(String(255), nullable=True)
     phone = Column(String(20), nullable=True)
     note = Column(String(255), nullable=True, comment="Примечание для матчинга с works")
+    invoice_schedule = Column(
+        String(20),
+        nullable=False,
+        default="monthly",
+        comment="Периодичность выставления: monthly, 2weeks, daily",
+    )
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
