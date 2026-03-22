@@ -41,7 +41,7 @@ alembic upgrade head
 python3 -m src.cli.sync_sheets
 
 # Выставить счёт вручную
-python3 -m src.cli.manual --counterparty "Алтай-Строй" --note "Ердякова 9"
+python3 -m src.cli.manual --counterparty "Алтай-Строй"
 
 # Cron (последний день месяца)
 python3 -m src.cli.cron

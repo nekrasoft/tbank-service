@@ -37,40 +37,39 @@ def _is_last_day_of_month() -> bool:
     return today.day == last_day
 
 
-def _get_uninvoiced_groups() -> list[tuple[str, str]]:
-    """Получение групп невыставленных работ."""
+def _get_uninvoiced_counterparties() -> list[str]:
+    """Получение контрагентов с невыставленными работами."""
     from src.db.connection import get_session
     from src.db.repos import works as works_repo
 
     session = get_session()
     try:
-        return works_repo.get_all_uninvoiced_groups(session)
+        return works_repo.get_all_uninvoiced_counterparties(session)
     finally:
         session.close()
 
 
-def _prepare_pending_invoice(counterparty_name: str, note: str) -> dict[str, Any] | None:
+def _prepare_pending_invoice(counterparty_name: str) -> dict[str, Any] | None:
     """Подготовка и фиксация pending-счёта в БД до вызова внешнего API."""
     from src.db.connection import get_session
     from src.db.repos import counterparties as cp_repo
     from src.db.repos import invoices as inv_repo
     from src.db.repos import invoice_number as num_repo
     from src.db.repos import works as works_repo
-    from src.invoice.builder import build_invoice_items
+    from src.invoice.builder import build_invoice_comment, build_invoice_items
 
     session = get_session()
     try:
-        cp = cp_repo.get_by_short_name(session, counterparty_name, note)
+        cp = cp_repo.get_by_short_name(session, counterparty_name, "")
         if not cp:
             logger.warning(
-                "Контрагент не найден: %s (примечание: %s) — пропуск",
+                "Контрагент не найден: %s — пропуск",
                 counterparty_name,
-                note or "(пусто)",
             )
             return None
 
         works = works_repo.get_uninvoiced_by_counterparty_for_update(
-            session, counterparty_name, note
+            session, counterparty_name
         )
         if not works:
             return None
@@ -79,6 +78,7 @@ def _prepare_pending_invoice(counterparty_name: str, note: str) -> dict[str, Any
         if not items:
             logger.warning("Нет цен для %s — пропуск", counterparty_name)
             return None
+        comment = build_invoice_comment(works)
 
         today = date.today()
         due_date = today + timedelta(days=14)
@@ -126,6 +126,7 @@ def _prepare_pending_invoice(counterparty_name: str, note: str) -> dict[str, Any
             "due_date": due_date,
             "invoice_date": today,
             "items": items,
+            "comment": comment,
         }
     except Exception:
         session.rollback()
@@ -197,16 +198,16 @@ def main() -> None:
 
     issued = 0
     errors = []
-    groups = _get_uninvoiced_groups()
-    if not groups:
+    counterparties = _get_uninvoiced_counterparties()
+    if not counterparties:
         logger.info("Нет контрагентов с невыставленными работами")
         return
 
-    for counterparty_name, note in groups:
+    for counterparty_name in counterparties:
         prepared: dict[str, Any] | None = None
         sent_to_tbank = False
         try:
-            prepared = _prepare_pending_invoice(counterparty_name, note)
+            prepared = _prepare_pending_invoice(counterparty_name)
             if not prepared:
                 continue
 
@@ -221,6 +222,7 @@ def main() -> None:
                 items=prepared["items"],
                 email=prepared["email"],
                 contact_phone=prepared["contact_phone"],
+                comment=prepared["comment"],
             )
             sent_to_tbank = True
             tbank_id = resp.get("invoiceId") or resp.get("id")

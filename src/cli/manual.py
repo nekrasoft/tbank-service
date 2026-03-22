@@ -1,6 +1,6 @@
 """
 CLI: ручное выставление счёта для одного контрагента.
-Запуск: python3 -m src.cli.manual --counterparty "Алтай-Строй" --note "Ердякова 9"
+Запуск: python3 -m src.cli.manual --counterparty "Алтай-Строй"
 --counterparty ожидает короткое имя контрагента (short_name).
 """
 from __future__ import annotations
@@ -27,28 +27,27 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def _prepare_pending_invoice(counterparty: str, note: str) -> dict[str, Any] | None:
+def _prepare_pending_invoice(counterparty: str) -> dict[str, Any] | None:
     """Подготовка и фиксация pending-счёта в БД до вызова внешнего API."""
     from src.db.connection import get_session
     from src.db.repos import counterparties as cp_repo
     from src.db.repos import invoices as inv_repo
     from src.db.repos import invoice_number as num_repo
     from src.db.repos import works as works_repo
-    from src.invoice.builder import build_invoice_items
+    from src.invoice.builder import build_invoice_comment, build_invoice_items
 
     session = get_session()
     try:
-        cp = cp_repo.get_by_short_name(session, counterparty, note)
+        cp = cp_repo.get_by_short_name(session, counterparty, "")
         if not cp:
             logger.error(
-                "Контрагент не найден: %s (примечание: %s). Проверьте short_name.",
+                "Контрагент не найден: %s. Проверьте short_name.",
                 counterparty,
-                note or "(пусто)",
             )
             return None
 
         works = works_repo.get_uninvoiced_by_counterparty_for_update(
-            session, counterparty, note
+            session, counterparty
         )
         if not works:
             logger.error("Нет невыставленных работ для контрагента %s", counterparty)
@@ -58,6 +57,7 @@ def _prepare_pending_invoice(counterparty: str, note: str) -> dict[str, Any] | N
         if not items:
             logger.error("Не удалось сформировать позиции счёта (нет цен?)")
             return None
+        comment = build_invoice_comment(works)
 
         today = date.today()
         due_date = today + timedelta(days=14)
@@ -103,6 +103,7 @@ def _prepare_pending_invoice(counterparty: str, note: str) -> dict[str, Any] | N
             "due_date": due_date,
             "invoice_date": today,
             "items": items,
+            "comment": comment,
         }
     except Exception:
         session.rollback()
@@ -161,12 +162,11 @@ def main() -> None:
     """Ручное выставление счёта."""
     parser = argparse.ArgumentParser(description="Выставить счёт контрагенту")
     parser.add_argument("--counterparty", "-c", required=True, help="Короткое имя контрагента (short_name)")
-    parser.add_argument("--note", "-n", default="", help="Примечание (для матчинга)")
     args = parser.parse_args()
 
     from src.notifications.telegram import send_invoice_notification_bytes
     from src.tbank.client import send_invoice
-    prepared = _prepare_pending_invoice(args.counterparty, args.note)
+    prepared = _prepare_pending_invoice(args.counterparty)
     if not prepared:
         sys.exit(1)
 
@@ -186,6 +186,7 @@ def main() -> None:
             items=prepared["items"],
             email=prepared["email"],
             contact_phone=prepared["contact_phone"],
+            comment=prepared["comment"],
         )
         sent_to_tbank = True
         tbank_id = resp.get("invoiceId") or resp.get("id")

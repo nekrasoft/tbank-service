@@ -11,44 +11,40 @@ from src.db.models import Work
 
 
 def get_uninvoiced_by_counterparty(
-    session: Session, counterparty_name: str, note: str
+    session: Session, counterparty_name: str
 ) -> list[Work]:
-    """Получение работ без выставленного счёта для пары (контрагент, примечание)."""
-    note_val = note or ""
+    """Получение работ без выставленного счёта для контрагента."""
     result = session.execute(
         select(Work)
         .where(Work.invoice_id.is_(None))
         .where(Work.counterparty_name == counterparty_name)
-        .where(func.coalesce(Work.note, "") == note_val)
         .order_by(Work.date, Work.id)
     )
     return list(result.scalars().all())
 
 
 def get_uninvoiced_by_counterparty_for_update(
-    session: Session, counterparty_name: str, note: str
+    session: Session, counterparty_name: str
 ) -> list[Work]:
-    """Получение и блокировка работ без счёта для пары (контрагент, примечание)."""
-    note_val = note or ""
+    """Получение и блокировка работ без счёта для контрагента."""
     result = session.execute(
         select(Work)
         .where(Work.invoice_id.is_(None))
         .where(Work.counterparty_name == counterparty_name)
-        .where(func.coalesce(Work.note, "") == note_val)
         .order_by(Work.date, Work.id)
         .with_for_update()
     )
     return list(result.scalars().all())
 
 
-def get_all_uninvoiced_groups(session: Session) -> list[tuple[str, str]]:
-    """Получение уникальных пар (counterparty_name, note) с невыставленными работами."""
+def get_all_uninvoiced_counterparties(session: Session) -> list[str]:
+    """Получение уникальных контрагентов с невыставленными работами."""
     result = session.execute(
-        select(Work.counterparty_name, Work.note)
+        select(Work.counterparty_name)
         .where(Work.invoice_id.is_(None))
         .distinct()
     )
-    return [(row[0], row[1] or "") for row in result.all()]
+    return [row[0] for row in result.all()]
 
 
 def get_max_date(session: Session) -> date | None:
