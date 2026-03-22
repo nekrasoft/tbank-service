@@ -60,6 +60,13 @@ def send_invoice_notification(
         lines.append(f"T-Bank ID: {tbank_invoice_id}")
     if invoice_link:
         lines.append(f"Ссылка: {invoice_link}")
+    lines.extend(
+        [
+            "",
+            "Необходимо в ТБанке создать Акт для данного счета и отправить оба документа в ЭДО",
+            "https://business.tbank.ru/sme/invoices/outgoing/submitted",
+        ]
+    )
     text = "\n".join(lines)
 
     bot = Bot(token=token)
