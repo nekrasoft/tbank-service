@@ -96,6 +96,7 @@ def _prepare_pending_invoice(counterparty_name: str, run_at: datetime) -> dict[s
     from src.db.repos import invoice_number as num_repo
     from src.db.repos import works as works_repo
     from src.invoice.builder import build_invoice_comment, build_invoice_items
+    from src.invoice.window import build_invoice_work_date_window, env_bool
 
     session = get_session()
     try:
@@ -114,8 +115,32 @@ def _prepare_pending_invoice(counterparty_name: str, run_at: datetime) -> dict[s
             )
             return None
 
+        strict_period = env_bool("INVOICE_STRICT_PERIOD", False)
+        warn_out_of_period = env_bool("INVOICE_WARN_OUT_OF_PERIOD", True)
+        date_from, date_to = build_invoice_work_date_window(
+            invoice_schedule=cp.invoice_schedule,
+            run_at=run_at,
+            strict_period=strict_period,
+        )
+        if strict_period and warn_out_of_period and date_from is not None:
+            old_count = works_repo.count_uninvoiced_before_date(
+                session,
+                counterparty_name,
+                before_date=date_from,
+            )
+            if old_count > 0:
+                logger.warning(
+                    "Контрагент %s: %s невыставленных работ до %s вне текущего strict-периода",
+                    counterparty_name,
+                    old_count,
+                    date_from.strftime("%d.%m.%Y"),
+                )
+
         works = works_repo.get_uninvoiced_by_counterparty_for_update(
-            session, counterparty_name
+            session,
+            counterparty_name,
+            date_from=date_from,
+            date_to=date_to,
         )
         if not works:
             return None

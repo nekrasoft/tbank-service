@@ -10,29 +10,56 @@ from sqlalchemy.sql import func
 from src.db.models import Work
 
 
+def _apply_date_bounds(
+    stmt,
+    *,
+    date_from: date | None = None,
+    date_to: date | None = None,
+):
+    """Применение опциональных границ даты к запросу Work."""
+    if date_from is not None:
+        stmt = stmt.where(Work.date >= date_from)
+    if date_to is not None:
+        stmt = stmt.where(Work.date <= date_to)
+    return stmt
+
+
 def get_uninvoiced_by_counterparty(
-    session: Session, counterparty_name: str
+    session: Session,
+    counterparty_name: str,
+    *,
+    date_from: date | None = None,
+    date_to: date | None = None,
 ) -> list[Work]:
     """Получение работ без выставленного счёта для контрагента."""
-    result = session.execute(
+    stmt = _apply_date_bounds(
         select(Work)
         .where(Work.invoice_id.is_(None))
-        .where(Work.counterparty_name == counterparty_name)
-        .order_by(Work.date, Work.id)
+        .where(Work.counterparty_name == counterparty_name),
+        date_from=date_from,
+        date_to=date_to,
     )
+    result = session.execute(stmt.order_by(Work.date, Work.id))
     return list(result.scalars().all())
 
 
 def get_uninvoiced_by_counterparty_for_update(
-    session: Session, counterparty_name: str
+    session: Session,
+    counterparty_name: str,
+    *,
+    date_from: date | None = None,
+    date_to: date | None = None,
 ) -> list[Work]:
     """Получение и блокировка работ без счёта для контрагента."""
-    result = session.execute(
+    stmt = _apply_date_bounds(
         select(Work)
         .where(Work.invoice_id.is_(None))
-        .where(Work.counterparty_name == counterparty_name)
-        .order_by(Work.date, Work.id)
-        .with_for_update()
+        .where(Work.counterparty_name == counterparty_name),
+        date_from=date_from,
+        date_to=date_to,
+    )
+    result = session.execute(
+        stmt.order_by(Work.date, Work.id).with_for_update()
     )
     return list(result.scalars().all())
 
@@ -45,6 +72,22 @@ def get_all_uninvoiced_counterparties(session: Session) -> list[str]:
         .distinct()
     )
     return [row[0] for row in result.all()]
+
+
+def count_uninvoiced_before_date(
+    session: Session,
+    counterparty_name: str,
+    *,
+    before_date: date,
+) -> int:
+    """Количество невыставленных работ контрагента с датой строго меньше before_date."""
+    result = session.execute(
+        select(func.count(Work.id))
+        .where(Work.invoice_id.is_(None))
+        .where(Work.counterparty_name == counterparty_name)
+        .where(Work.date < before_date)
+    )
+    return int(result.scalar() or 0)
 
 
 def get_max_date(session: Session) -> date | None:
