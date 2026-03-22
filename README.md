@@ -7,7 +7,7 @@
 - Синхронизация выполненных работ из Google Sheets в MySQL
 - Выставление счетов через T-Bank API
 - Генерация акта (PDF)
-- Отправка в Telegram бухгалтерам
+- Отправка в Telegram и MAX бухгалтерам
 - Cron: автоматическое выставление в последний день месяца
 - Ручное выставление счёта по запросу
 
@@ -61,5 +61,5 @@ python3 -m src.cli.cron
 - `src/sheets/` — чтение и синхронизация из Google Sheets
 - `src/tbank/` — клиент T-Bank API
 - `src/invoice/` — сборка счёта, генерация акта
-- `src/notifications/` — отправка в Telegram
+- `src/notifications/` — отправка в Telegram и MAX
 - `src/cli/` — точки входа (cron, manual, sync_sheets)

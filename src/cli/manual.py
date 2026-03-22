@@ -167,6 +167,7 @@ def main() -> None:
     parser.add_argument("--counterparty", "-c", required=True, help="Короткое имя контрагента (short_name)")
     args = parser.parse_args()
 
+    from src.notifications.max import send_invoice_notification as send_max_notification
     from src.notifications.telegram import send_invoice_notification_bytes
     from src.tbank.client import send_invoice
     prepared = _prepare_pending_invoice(args.counterparty)
@@ -214,6 +215,15 @@ def main() -> None:
             )
         except Exception:
             logger.exception("Ошибка Telegram-уведомления по счёту %s", invoice_number)
+        try:
+            send_max_notification(
+                counterparty_name=counterparty_name,
+                invoice_number=invoice_number,
+                tbank_invoice_id=str(tbank_id) if tbank_id else None,
+                invoice_link=str(invoice_link) if invoice_link else None,
+            )
+        except Exception:
+            logger.exception("Ошибка MAX-уведомления по счёту %s", invoice_number)
         time.sleep(0.3)  # Ограничение 4 req/sec
         logger.info("Счёт %s успешно выставлен для %s", invoice_number, counterparty_name)
     except Exception:

@@ -13,5 +13,9 @@ httpx>=0.27.0
 # Telegram
 python-telegram-bot>=21.0
 
+# MAX
+maxapi>=0.9.17
+aiohttp>=3.10,<4
+
 # Конфигурация
 python-dotenv>=1.0.0

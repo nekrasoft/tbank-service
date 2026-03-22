@@ -10,11 +10,12 @@ import os
 logger = logging.getLogger(__name__)
 
 
-def _get_bot_token() -> str:
-    """Токен бота из .env."""
+def _get_bot_token() -> str | None:
+    """Токен Telegram-бота из .env (None, если не задан)."""
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
     if not token:
-        raise ValueError("Задайте TELEGRAM_BOT_TOKEN в .env")
+        logger.info("Telegram: TELEGRAM_BOT_TOKEN не задан — пропускаем отправку уведомления")
+        return None
     return token
 
 
@@ -42,13 +43,16 @@ def send_invoice_notification(
     :param invoice_link: Ссылка на оплату (если есть)
     :return: True при успехе
     """
+    token = _get_bot_token()
+    if not token:
+        return False
+
     try:
         from telegram import Bot
     except ImportError:
         logger.warning("python-telegram-bot не установлен — уведомление не отправлено")
         return False
 
-    token = _get_bot_token()
     chat_id = _get_accountants_chat_id()
 
     lines = [
