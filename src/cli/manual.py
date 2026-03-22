@@ -107,6 +107,7 @@ def _prepare_pending_invoice(counterparty: str) -> dict[str, Any] | None:
             "invoice_date": today,
             "items": items,
             "comment": comment,
+            "sheet_row_hashes": [w.sheet_row_hash for w in works if w.sheet_row_hash],
         }
     except Exception:
         session.rollback()
@@ -169,6 +170,7 @@ def main() -> None:
 
     from src.notifications.max import send_invoice_notification as send_max_notification
     from src.notifications.telegram import send_invoice_notification_bytes
+    from src.sheets.writer import mark_document_in_sheet
     from src.tbank.client import send_invoice
     prepared = _prepare_pending_invoice(args.counterparty)
     if not prepared:
@@ -206,6 +208,19 @@ def main() -> None:
             tbank_invoice_id=str(tbank_id) if tbank_id else None,
             pdf_url=str(pdf_url) if pdf_url else None,
         )
+        try:
+            marked_rows = mark_document_in_sheet(
+                sheet_row_hashes=prepared["sheet_row_hashes"],
+                invoice_number=invoice_number,
+                invoice_date=prepared["invoice_date"],
+            )
+            logger.info(
+                "Sheets: для счёта %s заполнена колонка 'Документ' в %s строках",
+                invoice_number,
+                marked_rows,
+            )
+        except Exception:
+            logger.exception("Ошибка записи в Sheets по счёту %s", invoice_number)
         try:
             send_invoice_notification_bytes(
                 counterparty_name=counterparty_name,
