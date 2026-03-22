@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import uuid
 from datetime import date
 from typing import Any
@@ -16,6 +17,9 @@ logger = logging.getLogger(__name__)
 
 # Ограничение T-Bank: 4 запроса в секунду
 TBANK_RPS_LIMIT = 4
+
+_KPP_RE = re.compile(r"^\d{9}$")
+_PHONE_RE = re.compile(r"^\+\d{10,15}$")
 
 
 def _get_base_url() -> str:
@@ -77,15 +81,22 @@ def send_invoice(
     inv_date = invoice_date or date.today()
     inv_date_str = inv_date.strftime("%Y-%m-%d")
 
+    payer: dict[str, Any] = {
+        "name": payer_name[:512],
+        "inn": payer_inn,
+    }
+    payer_kpp_norm = (payer_kpp or "").strip()
+    if payer_kpp_norm:
+        if _KPP_RE.match(payer_kpp_norm):
+            payer["kpp"] = payer_kpp_norm
+        else:
+            logger.warning("T-Bank: пропускаем некорректный payer.kpp='%s'", payer_kpp)
+
     payload = {
         "invoiceNumber": invoice_number,
         "dueDate": due_str,
         "invoiceDate": inv_date_str,
-        "payer": {
-            "name": payer_name[:512],
-            "inn": payer_inn,
-            "kpp": payer_kpp,
-        },
+        "payer": payer,
         "items": [
             {
                 "name": str(item["name"])[:1000],
@@ -105,7 +116,14 @@ def send_invoice(
     if email:
         contacts.append({"email": email})
     if contact_phone:
-        contacts.append({"contactPhone": contact_phone})
+        phone_norm = str(contact_phone).strip()
+        if _PHONE_RE.match(phone_norm):
+            contacts.append({"contactPhone": phone_norm})
+        else:
+            logger.warning(
+                "T-Bank: пропускаем некорректный contactPhone='%s' (ожидается +79XXXXXXXXX)",
+                contact_phone,
+            )
     if contacts:
         payload["contacts"] = contacts
 
@@ -116,6 +134,19 @@ def send_invoice(
 
     with httpx.Client(timeout=30.0) as client:
         resp = client.post(url, json=payload, headers=headers)
+        if resp.is_error:
+            response_preview = resp.text[:2000]
+            logger.error(
+                "T-Bank: ошибка выставления счёта %s, status=%s, body=%s",
+                invoice_number,
+                resp.status_code,
+                response_preview,
+            )
+            logger.error(
+                "T-Bank: payload(invoice/send) для счёта %s: %s",
+                invoice_number,
+                payload,
+            )
         resp.raise_for_status()
         data = resp.json()
         logger.info(
