@@ -25,6 +25,22 @@ def get_uninvoiced_by_counterparty(
     return list(result.scalars().all())
 
 
+def get_uninvoiced_by_counterparty_for_update(
+    session: Session, counterparty_name: str, note: str
+) -> list[Work]:
+    """Получение и блокировка работ без счёта для пары (контрагент, примечание)."""
+    note_val = note or ""
+    result = session.execute(
+        select(Work)
+        .where(Work.invoice_id.is_(None))
+        .where(Work.counterparty_name == counterparty_name)
+        .where(func.coalesce(Work.note, "") == note_val)
+        .order_by(Work.date, Work.id)
+        .with_for_update()
+    )
+    return list(result.scalars().all())
+
+
 def get_all_uninvoiced_groups(session: Session) -> list[tuple[str, str]]:
     """Получение уникальных пар (counterparty_name, note) с невыставленными работами."""
     result = session.execute(
@@ -81,7 +97,12 @@ def update_invoice_id(
     session: Session, work_ids: list[int], invoice_id: int
 ) -> int:
     """Привязка работ к выставленному счёту."""
+    if not work_ids:
+        return 0
     result = session.execute(
-        update(Work).where(Work.id.in_(work_ids)).values(invoice_id=invoice_id)
+        update(Work)
+        .where(Work.id.in_(work_ids))
+        .where(Work.invoice_id.is_(None))
+        .values(invoice_id=invoice_id)
     )
     return result.rowcount or 0

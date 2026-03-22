@@ -1,6 +1,6 @@
 """
 CLI: синхронизация работ из Google Sheets в MySQL.
-Запуск: python -m src.cli.sync_sheets
+Запуск: python3 -m src.cli.sync_sheets
 """
 from __future__ import annotations
 

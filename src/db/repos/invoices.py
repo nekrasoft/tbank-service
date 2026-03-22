@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from src.db.models import Invoice, InvoiceItem
@@ -72,3 +72,35 @@ def get_items(session: Session, invoice_id: int) -> list[InvoiceItem]:
         select(InvoiceItem).where(InvoiceItem.invoice_id == invoice_id)
     )
     return list(result.scalars().all())
+
+
+def mark_as_issued(
+    session: Session,
+    *,
+    invoice_id: int,
+    tbank_invoice_id: str | None,
+    pdf_url: str | None = None,
+) -> int:
+    """Пометка счёта как успешно отправленного в T-Bank."""
+    values = {
+        "status": "issued",
+        "tbank_invoice_id": tbank_invoice_id,
+    }
+    if pdf_url is not None:
+        values["pdf_url"] = pdf_url
+    result = session.execute(
+        update(Invoice)
+        .where(Invoice.id == invoice_id)
+        .values(**values)
+    )
+    return result.rowcount or 0
+
+
+def mark_as_failed(session: Session, *, invoice_id: int) -> int:
+    """Пометка счёта как неотправленного в T-Bank."""
+    result = session.execute(
+        update(Invoice)
+        .where(Invoice.id == invoice_id)
+        .values(status="failed_send")
+    )
+    return result.rowcount or 0

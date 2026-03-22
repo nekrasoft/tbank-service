@@ -133,7 +133,7 @@ def get_invoice_info(invoice_id: str) -> dict[str, Any]:
     :param invoice_id: Идентификатор счёта в T-Bank
     :return: Данные счёта (статус и др.)
     """
-    url = f"{_get_base_url()}/openapi/invoice/{invoice_id}/info"
+    url = f"{_get_base_url()}/invoice/{invoice_id}/info"
     headers = {
         "Authorization": f"Bearer {_get_token()}",
         "X-Request-Id": str(uuid.uuid4()),

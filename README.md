@@ -14,7 +14,8 @@
 ## Установка
 
 ```bash
-pip install -r requirements.txt
+# Требуется Python 3.11+
+python3 -m pip install -r requirements.txt
 cp .env.example .env
 # Заполнить .env
 ```
@@ -37,13 +38,13 @@ alembic upgrade head
 
 ```bash
 # Синхронизация работ из Google Sheets
-python -m src.cli.sync_sheets
+python3 -m src.cli.sync_sheets
 
 # Выставить счёт вручную
-python -m src.cli.manual --counterparty "Алтай-Строй" --note "Ердякова 9"
+python3 -m src.cli.manual --counterparty "Алтай-Строй" --note "Ердякова 9"
 
 # Cron (последний день месяца)
-python -m src.cli.cron
+python3 -m src.cli.cron
 ```
 
 ## Структура
