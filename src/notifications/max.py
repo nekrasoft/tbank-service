@@ -8,6 +8,7 @@ import inspect
 import logging
 import os
 from typing import Any
+from maxapi.enums.parse_mode import ParseMode
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +82,7 @@ def send_invoice_notification(
 
     async def _send() -> None:
         try:
-            await bot.send_message(chat_id=chat_id, text=text)
+            await bot.send_message(chat_id=chat_id, text=text, parse_mode=ParseMode.MARKDOWN)
         finally:
             await _close_bot(bot)
 
