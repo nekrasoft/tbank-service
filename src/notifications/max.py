@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import os
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +81,10 @@ def send_invoice_notification(
     bot = Bot(token=token)
 
     async def _send() -> None:
-        await bot.send_message(chat_id=chat_id, text=text)
+        try:
+            await bot.send_message(chat_id=chat_id, text=text)
+        finally:
+            await _close_bot(bot)
 
     try:
         asyncio.run(_send())
@@ -88,3 +93,49 @@ def send_invoice_notification(
     except Exception as e:
         logger.error("MAX: ошибка отправки — %s", e)
         return False
+
+
+async def _close_bot(bot: Any) -> None:
+    """
+    Безопасное закрытие ресурсов maxapi.Bot.
+
+    Нужен явный close, иначе при короткоживущем процессе остаются
+    unclosed aiohttp sessions/connectors.
+    """
+    for method_name in ("close", "aclose", "shutdown"):
+        method = getattr(bot, method_name, None)
+        if callable(method):
+            try:
+                result = method()
+                if inspect.isawaitable(result):
+                    await result
+                return
+            except Exception as e:
+                logger.debug("MAX: не удалось закрыть bot.%s(): %s", method_name, e)
+
+    if await _close_possible_session(bot):
+        return
+
+    for holder_name in ("api", "_api", "client", "_client"):
+        holder = getattr(bot, holder_name, None)
+        if holder and await _close_possible_session(holder):
+            return
+
+
+async def _close_possible_session(obj: Any) -> bool:
+    """Пытаемся найти и закрыть aiohttp-сессию в объекте."""
+    for session_name in ("session", "_session", "client_session", "_client_session"):
+        session = getattr(obj, session_name, None)
+        if session is None:
+            continue
+        close = getattr(session, "close", None)
+        if not callable(close):
+            continue
+        try:
+            result = close()
+            if inspect.isawaitable(result):
+                await result
+            return True
+        except Exception as e:
+            logger.debug("MAX: не удалось закрыть session %s: %s", session_name, e)
+    return False
