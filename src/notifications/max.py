@@ -61,7 +61,7 @@ def send_invoice_notification(
     chat_id = _get_accountants_chat_id()
 
     lines = [
-        "💰 Выставлен счёт",
+        "💰 **Выставлен счёт**",
         f"Контрагент: {counterparty_name}",
         f"Номер счёта: {invoice_number}",
     ]
@@ -72,7 +72,7 @@ def send_invoice_notification(
     lines.extend(
         [
             "",
-            "‼️ Необходимо в ТБанке создать Акт для данного счета и отправить оба документа в ЭДО ‼️",
+            "‼️ **Необходимо в ТБанке создать Акт для данного счета и отправить оба документа в ЭДО**",
         ]
     )
     text = "\n".join(lines)
