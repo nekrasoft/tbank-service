@@ -28,6 +28,8 @@ logger = logging.getLogger(__name__)
 
 # Ограничение T-Bank: 4 запроса в секунду
 TBANK_DELAY_SEC = 0.3
+# Временный override для дебага: все счета отправляются на этот email.
+DEBUG_FORCE_EMAIL = "nekrasoft.kirov@gmail.com"
 
 
 def _is_last_day_of_month() -> bool:
@@ -220,7 +222,7 @@ def main() -> None:
                 payer_inn=prepared["payer_inn"],
                 payer_kpp=prepared["payer_kpp"],
                 items=prepared["items"],
-                email=prepared["email"],
+                email=DEBUG_FORCE_EMAIL,
                 contact_phone=prepared["contact_phone"],
                 comment=prepared["comment"],
             )

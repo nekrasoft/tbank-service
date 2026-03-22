@@ -26,6 +26,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Временный override для дебага: все счета отправляются на этот email.
+DEBUG_FORCE_EMAIL = "nekrasoft.kirov@gmail.com"
+
 
 def _prepare_pending_invoice(counterparty: str) -> dict[str, Any] | None:
     """Подготовка и фиксация pending-счёта в БД до вызова внешнего API."""
@@ -184,7 +187,7 @@ def main() -> None:
             payer_inn=prepared["payer_inn"],
             payer_kpp=prepared["payer_kpp"],
             items=prepared["items"],
-            email=prepared["email"],
+            email=DEBUG_FORCE_EMAIL,
             contact_phone=prepared["contact_phone"],
             comment=prepared["comment"],
         )
