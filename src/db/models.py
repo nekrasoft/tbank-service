@@ -79,6 +79,7 @@ class Work(Base):
     structure = Column(String(255), nullable=True)
     operation = Column(String(255), nullable=True)
     object_count = Column(String(50), nullable=True, comment="Количество (контейнеры, ходки и т.д.)")
+    revenue = Column(Numeric(14, 2), nullable=True, comment="Выручка из Google Sheets")
     sheet_row_hash = Column(String(64), nullable=False, unique=True, comment="Дедупликация")
     invoice_id = Column(Integer, ForeignKey("invoices.id", ondelete="SET NULL"), nullable=True)  # noqa: E501 — Invoice определена ниже
     created_at = Column(DateTime, default=datetime.utcnow)

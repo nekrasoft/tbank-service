@@ -76,7 +76,7 @@ def read_works(
     При last_date обрабатываются только строки с датой >= last_date.
 
     Возвращает список словарей с ключами:
-    date, counterparty_name, note, structure, operation, object_count, sheet_row_hash
+    date, counterparty_name, note, structure, operation, object_count, revenue, sheet_row_hash
     """
     schema = _load_schema()
     url = sheet_url or os.environ.get("GOOGLE_SHEET_URL") or schema.get("google_sheet_url")
@@ -95,7 +95,7 @@ def read_works(
         worksheet = spreadsheet.sheet1
 
     # Только нужные колонки — обходит дубликаты/пустые заголовки в строке заголовков.
-    required_headers = ["Дата", "Контрагент", "Примечание", "Структура", "Операция", "Объект"]
+    required_headers = ["Дата", "Контрагент", "Примечание", "Структура", "Операция", "Объект", "Выручка"]
     try:
         records = worksheet.get_all_records(expected_headers=required_headers)
     except Exception:
@@ -134,6 +134,7 @@ def read_works(
         if operation != "Поступление по основной деятельности":
             continue
         object_count = str(row.get("Объект", "") or "1").strip() or "1"
+        revenue = str(row.get("Выручка", "") or "").strip()
 
         sheet_row_hash = hashlib.sha256(
             f"{date_str}|{counterparty}|{note}|{structure}|{operation}|{object_count}".encode("utf-8")
@@ -146,6 +147,7 @@ def read_works(
             "structure": structure,
             "operation": operation,
             "object_count": object_count,
+            "revenue": revenue,
             "sheet_row_hash": sheet_row_hash,
         })
     return works

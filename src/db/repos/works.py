@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import date
+from decimal import Decimal
 
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
@@ -114,6 +115,7 @@ def create(
     structure: str,
     operation: str,
     object_count: str,
+    revenue: Decimal | None = None,
     sheet_row_hash: str,
 ) -> Work:
     """Создание записи о работе."""
@@ -124,12 +126,29 @@ def create(
         structure=structure,
         operation=operation,
         object_count=object_count or "1",
+        revenue=revenue,
         sheet_row_hash=sheet_row_hash,
     )
     session.add(work)
     session.flush()
     session.refresh(work)
     return work
+
+
+def update_revenue_by_hash_if_uninvoiced(
+    session: Session,
+    *,
+    sheet_row_hash: str,
+    revenue: Decimal,
+) -> int:
+    """Обновление выручки по hash только для невыставленной работы."""
+    result = session.execute(
+        update(Work)
+        .where(Work.sheet_row_hash == sheet_row_hash)
+        .where(Work.invoice_id.is_(None))
+        .values(revenue=revenue)
+    )
+    return result.rowcount or 0
 
 
 def update_invoice_id(

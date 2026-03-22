@@ -7,6 +7,7 @@ import json
 import logging
 from collections import defaultdict
 from datetime import date as date_type
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 
 from sqlalchemy.orm import Session
@@ -21,6 +22,7 @@ OPERATIONS_PATH = PROJECT_ROOT / "config" / "operations.json"
 
 # Маппинг (структура, операция) -> operation_type
 _OPERATION_TYPE_MAP: dict[tuple[str, str], str] = {}
+_MONEY_Q = Decimal("0.01")
 
 
 def _load_operation_type_map() -> dict[tuple[str, str], str]:
@@ -62,6 +64,26 @@ def _format_amount(amount: float) -> str:
     if abs(amount - rounded_int) < 1e-9:
         return str(rounded_int)
     return f"{amount:.2f}".rstrip("0").rstrip(".")
+
+
+def _parse_revenue(value: object) -> Decimal | None:
+    """Парсинг выручки из Work.revenue. Пустые/невалидные значения -> None."""
+    if value is None:
+        return None
+    if isinstance(value, Decimal):
+        dec = value
+    else:
+        raw = str(value).strip()
+        if not raw:
+            return None
+        cleaned = raw.replace("\u00a0", "").replace(" ", "").replace(",", ".")
+        try:
+            dec = Decimal(cleaned)
+        except (InvalidOperation, ValueError):
+            return None
+    if dec <= 0:
+        return None
+    return dec.quantize(_MONEY_Q, rounding=ROUND_HALF_UP)
 
 
 def build_invoice_comment(works: list[Work]) -> str:
@@ -108,36 +130,64 @@ def build_invoice_items(
     with open(OPERATIONS_PATH, "r", encoding="utf-8") as f:
         ops_config = json.load(f)
 
-    # Группировка по operation_type с суммированием количества
-    by_type: dict[str, float] = defaultdict(float)
+    # Группировка по operation_type:
+    # - fallback_amount: количество, которое нужно считать по прайсу
+    # - revenue_total: сумма выручки из таблицы
+    fallback_amount_by_type: dict[str, float] = defaultdict(float)
+    revenue_total_by_type: dict[str, Decimal] = defaultdict(lambda: Decimal("0.00"))
     for w in works:
         op_type = _get_operation_type(w)
         if not op_type or op_type in ("advance", "landfill_unload"):
             continue
+        revenue = _parse_revenue(getattr(w, "revenue", None))
+        if revenue is not None:
+            revenue_total_by_type[op_type] += revenue
+            continue
         amount = _parse_amount(w.object_count)
-        by_type[op_type] += amount
+        fallback_amount_by_type[op_type] += amount
 
-    if not by_type:
+    op_types = list(dict.fromkeys([*fallback_amount_by_type.keys(), *revenue_total_by_type.keys()]))
+    if not op_types:
         return []
 
     items = []
-    for op_type, total_amount in by_type.items():
-        price_rec = prices_repo.get_by_counterparty_and_operation(
-            session, counterparty_id, op_type
-        )
-        if not price_rec:
+    for op_type in op_types:
+        fallback_amount = fallback_amount_by_type.get(op_type, 0.0)
+        revenue_total = revenue_total_by_type.get(op_type, Decimal("0.00"))
+
+        price_rec = prices_repo.get_by_counterparty_and_operation(session, counterparty_id, op_type)
+        if fallback_amount > 0 and not price_rec:
             raise ValueError(
-                f"Не найдена цена для контрагента id={counterparty_id}, "
-                f"тип операции={op_type}"
+                f"Не найдена цена для контрагента id={counterparty_id}, тип операции={op_type}"
             )
+
         display_name = (
             ops_config.get(op_type, {}).get("display_name") or op_type
         )
+
+        if revenue_total > 0:
+            fallback_total = Decimal("0.00")
+            if fallback_amount > 0 and price_rec is not None:
+                fallback_amount_dec = Decimal(str(round(fallback_amount, 2)))
+                fallback_total = (Decimal(price_rec.price) * fallback_amount_dec).quantize(
+                    _MONEY_Q,
+                    rounding=ROUND_HALF_UP,
+                )
+            total_price = (revenue_total + fallback_total).quantize(_MONEY_Q, rounding=ROUND_HALF_UP)
+            items.append({
+                "name": display_name,
+                "price": float(total_price),
+                "unit": "ед.",
+                "vat": (price_rec.vat if price_rec else "None") or "None",
+                "amount": 1.0,
+            })
+            continue
+
         items.append({
             "name": display_name,
             "price": float(price_rec.price),
             "unit": "ед.",
             "vat": price_rec.vat or "None",
-            "amount": round(total_amount, 2),
+            "amount": round(fallback_amount, 2),
         })
     return items
