@@ -20,6 +20,33 @@ TBANK_RPS_LIMIT = 4
 
 _KPP_RE = re.compile(r"^\d{9}$")
 _PHONE_RE = re.compile(r"^\+\d{10,15}$")
+_EMAIL_SPLIT_RE = re.compile(r"[,\n;]+")
+
+
+def _normalize_emails(value: str | list[str] | None) -> list[str]:
+    """Нормализация email(ов) из строки/списка в уникальный список."""
+    if value is None:
+        return []
+
+    parts: list[str] = []
+    if isinstance(value, str):
+        parts = _EMAIL_SPLIT_RE.split(value)
+    else:
+        for item in value:
+            parts.extend(_EMAIL_SPLIT_RE.split(str(item)))
+
+    emails: list[str] = []
+    seen: set[str] = set()
+    for raw in parts:
+        email = raw.strip()
+        if not email:
+            continue
+        key = email.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        emails.append(email)
+    return emails
 
 
 def _get_base_url() -> str:
@@ -47,7 +74,7 @@ def send_invoice(
     payer_inn: str,
     payer_kpp: str,
     items: list[dict[str, Any]],
-    email: str | None = None,
+    email: str | list[str] | None = None,
     contact_phone: str | None = None,
     comment: str | None = None,
     custom_payment_purpose: str | None = None,
@@ -63,7 +90,7 @@ def send_invoice(
     :param payer_inn: ИНН плательщика
     :param payer_kpp: КПП плательщика
     :param items: Позиции счёта [{name, price, unit, vat, amount}]
-    :param email: Email для отправки счёта контрагенту
+    :param email: Email(ы) для отправки счёта (строка или список строк)
     :param contact_phone: Телефон в формате +79XXXXXXXXX
     :param comment: Комментарий к счёту
     :param custom_payment_purpose: Назначение платежа
@@ -113,8 +140,8 @@ def send_invoice(
         payload["accountNumber"] = account_number
 
     contacts = []
-    if email:
-        contacts.append({"email": email})
+    for email_value in _normalize_emails(email):
+        contacts.append({"email": email_value})
     if contact_phone:
         phone_norm = str(contact_phone).strip()
         if _PHONE_RE.match(phone_norm):

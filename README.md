@@ -51,6 +51,7 @@ python3 -m src.cli.cron
 
 - Если в `.env` задан `DEBUG_FORCE_EMAIL`, все счета отправляются на этот адрес.
 - Если `DEBUG_FORCE_EMAIL` пустой, используется email контрагента из `counterparties.email`.
+- В `counterparties.email` можно указывать несколько адресов через запятую (например: `a@x.ru, b@y.ru`) — в T-Bank они отправляются как несколько контактов.
 
 ## Периодичность Выставления
 
