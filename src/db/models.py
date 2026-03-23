@@ -29,7 +29,7 @@ class Counterparty(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(255), nullable=False, index=True, comment="Полное имя — для API Т‑Банка, счетов, актов")
-    short_name = Column(String(255), nullable=False, index=True, comment="Короткое имя — для CLI, sheets, works")
+    short_name = Column(String(255), nullable=False, comment="Короткое имя — для CLI, sheets, works")
     inn = Column(String(12), nullable=False)
     kpp = Column(String(9), nullable=True)
     email = Column(String(255), nullable=True)
@@ -46,6 +46,8 @@ class Counterparty(Base):
 
     __table_args__ = (
         Index("ix_counterparties_name_note", "name", "note"),
+        Index("ix_counterparties_short_name", "short_name", unique=True),
+        Index("ix_counterparties_inn", "inn", unique=True),
         Index("ix_counterparties_short_name_note", "short_name", "note"),
     )
 

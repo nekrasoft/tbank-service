@@ -32,10 +32,10 @@ TBANK_DELAY_SEC = 0.3
 DEBUG_FORCE_EMAIL = "nekrasoft.kirov@gmail.com"
 
 # Окна выставления для периодичности.
-MONTHLY_EVENING_START_HOUR = 21
+MONTHLY_EVENING_START_HOUR = 19
 BIWEEKLY_MIDMONTH_DAY = 15
-BIWEEKLY_MORNING_START_HOUR = 8
-BIWEEKLY_MORNING_END_HOUR = 12
+BIWEEKLY_MORNING_START_HOUR = 5
+BIWEEKLY_MORNING_END_HOUR = 9
 
 
 def _is_last_day_of_month(target_date: date) -> bool:
