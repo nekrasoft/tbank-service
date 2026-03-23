@@ -39,7 +39,7 @@ def _prepare_pending_invoice(counterparty: str) -> dict[str, Any] | None:
     from src.db.repos import invoice_number as num_repo
     from src.db.repos import works as works_repo
     from src.invoice.builder import build_invoice_comment, build_invoice_items
-    from src.invoice.window import build_invoice_work_date_window, env_bool
+    from src.invoice.window import build_invoice_work_date_window_manual, env_bool
 
     session = get_session()
     try:
@@ -54,7 +54,7 @@ def _prepare_pending_invoice(counterparty: str) -> dict[str, Any] | None:
         run_at = datetime.now()
         strict_period = env_bool("INVOICE_STRICT_PERIOD", False)
         warn_out_of_period = env_bool("INVOICE_WARN_OUT_OF_PERIOD", True)
-        date_from, date_to = build_invoice_work_date_window(
+        date_from, date_to = build_invoice_work_date_window_manual(
             invoice_schedule=cp.invoice_schedule,
             run_at=run_at,
             strict_period=strict_period,
