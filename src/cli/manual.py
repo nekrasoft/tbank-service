@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 import time
 from datetime import date, datetime, timedelta
@@ -26,8 +27,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Временный override для дебага: все счета отправляются на этот email.
-DEBUG_FORCE_EMAIL = "nekrasoft.kirov@gmail.com"
+# Опциональный override из ENV: если задан, все счета отправляются на этот email.
+DEBUG_FORCE_EMAIL = (os.environ.get("DEBUG_FORCE_EMAIL") or "").strip() or None
 
 
 def _prepare_pending_invoice(counterparty: str) -> dict[str, Any] | None:
@@ -206,6 +207,9 @@ def main() -> None:
     invoice_number = prepared["invoice_number"]
     counterparty_name = prepared["counterparty_name"]
     sent_to_tbank = False
+    target_email = DEBUG_FORCE_EMAIL or prepared["email"]
+    if DEBUG_FORCE_EMAIL:
+        logger.warning("Используется DEBUG_FORCE_EMAIL override: %s", DEBUG_FORCE_EMAIL)
 
     try:
         resp = send_invoice(
@@ -216,7 +220,7 @@ def main() -> None:
             payer_inn=prepared["payer_inn"],
             payer_kpp=prepared["payer_kpp"],
             items=prepared["items"],
-            email=DEBUG_FORCE_EMAIL,
+            email=target_email,
             contact_phone=prepared["contact_phone"],
             comment=prepared["comment"],
         )

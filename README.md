@@ -47,6 +47,11 @@ python3 -m src.cli.manual --counterparty "Алтай-Строй"
 python3 -m src.cli.cron
 ```
 
+## Override Email Для Отладки
+
+- Если в `.env` задан `DEBUG_FORCE_EMAIL`, все счета отправляются на этот адрес.
+- Если `DEBUG_FORCE_EMAIL` пустой, используется email контрагента из `counterparties.email`.
+
 ## Периодичность Выставления
 
 В таблице `counterparties` используется поле `invoice_schedule`:

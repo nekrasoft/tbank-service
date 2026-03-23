@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import calendar
 import logging
+import os
 import sys
 import time
 from datetime import date, datetime, timedelta
@@ -28,8 +29,8 @@ logger = logging.getLogger(__name__)
 
 # Ограничение T-Bank: 4 запроса в секунду
 TBANK_DELAY_SEC = 0.3
-# Временный override для дебага: все счета отправляются на этот email.
-DEBUG_FORCE_EMAIL = "nekrasoft.kirov@gmail.com"
+# Опциональный override из ENV: если задан, все счета отправляются на этот email.
+DEBUG_FORCE_EMAIL = (os.environ.get("DEBUG_FORCE_EMAIL") or "").strip() or None
 
 # Окна выставления для периодичности.
 MONTHLY_EVENING_START_HOUR = 19
@@ -264,6 +265,8 @@ def main() -> None:
     # 1. Синхронизация Sheets → MySQL
     run_at = datetime.now()
     logger.info("Время запуска крона: %s", run_at.strftime("%Y-%m-%d %H:%M:%S"))
+    if DEBUG_FORCE_EMAIL:
+        logger.warning("Используется DEBUG_FORCE_EMAIL override: %s", DEBUG_FORCE_EMAIL)
     logger.info("Синхронизация Sheets → MySQL...")
     sync_sheets_to_mysql()
 
@@ -291,7 +294,7 @@ def main() -> None:
                 payer_inn=prepared["payer_inn"],
                 payer_kpp=prepared["payer_kpp"],
                 items=prepared["items"],
-                email=DEBUG_FORCE_EMAIL,
+                email=DEBUG_FORCE_EMAIL or prepared["email"],
                 contact_phone=prepared["contact_phone"],
                 comment=prepared["comment"],
             )
