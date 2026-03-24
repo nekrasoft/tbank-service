@@ -10,6 +10,7 @@
 - Отправка в Telegram и MAX бухгалтерам
 - Cron: автоматическое выставление в последний день месяца
 - Ручное выставление счёта по запросу
+- Импорт контрагентов в Bitrix24 CRM
 
 ## Установка
 
@@ -48,7 +49,32 @@ python3 -m src.cli.manual --counterparty "Алтай-Строй"
 
 # Cron (последний день месяца)
 python3 -m src.cli.cron
+
+# Импорт контрагентов в Bitrix24 CRM
+python3 -m src.cli.import_counterparties_to_bitrix24
 ```
+
+## Импорт Контрагентов В Bitrix24
+
+- Для импорта используется входящий вебхук `BITRIX24_WEBHOOK_URL` и метод `crm.company.add`.
+- Скрипт читает все записи из таблицы `counterparties` и создаёт компании в Bitrix24.
+- Обязательный минимум для `.env`:
+
+```env
+BITRIX24_WEBHOOK_URL=https://<portal>.bitrix24.ru/rest/<user_id>/<code>
+```
+
+- Полезные флаги:
+  - `--dry-run` — проверить список без отправки запросов
+  - `--limit 10` — ограничить объём импорта
+  - `--short-name "Алтай-Строй"` — импортировать только указанные `short_name` (флаг можно повторять)
+  - `--stop-on-error` — остановиться на первой ошибке
+- Опционально можно передавать данные в пользовательские поля Bitrix24 (`UF_CRM_*`) через env-переменные:
+  - `BITRIX24_COMPANY_SHORT_NAME_FIELD`
+  - `BITRIX24_COMPANY_INN_FIELD`
+  - `BITRIX24_COMPANY_KPP_FIELD`
+  - `BITRIX24_COMPANY_NOTE_FIELD`
+  - `BITRIX24_COMPANY_INVOICE_SCHEDULE_FIELD`
 
 ## Override Email Для Отладки
 
@@ -86,6 +112,7 @@ python3 -m src.cli.cron
 - `src/db/` — модели, репозитории, подключение к MySQL
 - `src/sheets/` — чтение и синхронизация из Google Sheets
 - `src/tbank/` — клиент T-Bank API
+- `src/bitrix/` — клиент Bitrix24 CRM
 - `src/invoice/` — сборка счёта, генерация акта
 - `src/notifications/` — отправка в Telegram и MAX
-- `src/cli/` — точки входа (cron, manual, sync_sheets)
+- `src/cli/` — точки входа (`cron`, `manual`, `sync_sheets`, `import_counterparties_to_bitrix24`)
