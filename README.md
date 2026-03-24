@@ -40,6 +40,9 @@ alembic upgrade head
 # Синхронизация работ из Google Sheets
 python3 -m src.cli.sync_sheets
 
+# Backfill выручки/данных начиная с даты
+python3 -m src.cli.sync_sheets --from-date 01.03.2026
+
 # Выставить счёт вручную
 python3 -m src.cli.manual --counterparty "Алтай-Строй"
 

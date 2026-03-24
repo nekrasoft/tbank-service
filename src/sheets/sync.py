@@ -60,21 +60,24 @@ def _parse_revenue(value: str | None) -> Decimal | None:
 def sync_sheets_to_mysql(
     sheet_url: str | None = None,
     sheet_name: str | None = None,
+    from_date: date | None = None,
 ) -> int:
     """
     Синхронизация работ из Google Sheets в MySQL.
-    Читает только строки с датой >= последней импортированной. Дедупликация по sheet_row_hash.
+    Читает строки с датой >= from_date, если он задан, иначе >= последней импортированной.
+    Дедупликация по sheet_row_hash.
     Возвращает количество добавленных строк.
     """
     session = get_session()
     try:
-        last_date = works_repo.get_max_date(session)
+        last_date = from_date or works_repo.get_max_date(session)
         rows = read_works(sheet_url=sheet_url, sheet_name=sheet_name, last_date=last_date)
         if not rows:
             logger.info("Синхронизация: в таблице нет строк для импорта")
             return 0
 
         added = 0
+        revenue_updated = 0
         for row in rows:
             parsed_revenue = _parse_revenue(row.get("revenue"))
             if row.get("revenue") and parsed_revenue is None:
@@ -86,7 +89,7 @@ def sync_sheets_to_mysql(
 
             if works_repo.exists_by_hash(session, row["sheet_row_hash"]):
                 if parsed_revenue is not None:
-                    works_repo.update_revenue_by_hash_if_uninvoiced(
+                    revenue_updated += works_repo.update_revenue_by_hash(
                         session,
                         sheet_row_hash=row["sheet_row_hash"],
                         revenue=parsed_revenue,
@@ -113,7 +116,12 @@ def sync_sheets_to_mysql(
             )
             added += 1
         session.commit()
-        logger.info("Синхронизация: добавлено %s новых работ из %s строк", added, len(rows))
+        logger.info(
+            "Синхронизация: добавлено %s новых работ, обновлено выручки %s (обработано строк: %s)",
+            added,
+            revenue_updated,
+            len(rows),
+        )
         return added
     except Exception:
         session.rollback()

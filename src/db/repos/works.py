@@ -151,6 +151,21 @@ def update_revenue_by_hash_if_uninvoiced(
     return result.rowcount or 0
 
 
+def update_revenue_by_hash(
+    session: Session,
+    *,
+    sheet_row_hash: str,
+    revenue: Decimal,
+) -> int:
+    """Обновление выручки по hash независимо от статуса счёта."""
+    result = session.execute(
+        update(Work)
+        .where(Work.sheet_row_hash == sheet_row_hash)
+        .values(revenue=revenue)
+    )
+    return result.rowcount or 0
+
+
 def update_invoice_id(
     session: Session, work_ids: list[int], invoice_id: int
 ) -> int:
