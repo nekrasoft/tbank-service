@@ -1,5 +1,5 @@
 """
-Чтение работ из Google Sheets для синхронизации в MySQL.
+Чтение данных из Google Sheets для синхронизации в MySQL.
 """
 from __future__ import annotations
 
@@ -151,3 +151,93 @@ def read_works(
             "sheet_row_hash": sheet_row_hash,
         })
     return works
+
+
+def read_counterparties(
+    sheet_url: str | None = None,
+    sheet_name: str | None = None,
+) -> list[dict]:
+    """
+    Чтение контрагентов из вкладки Google Sheets.
+
+    Ожидаемые заголовки:
+    - ИНН контрагента
+    - КПП контрагента
+    - Email
+    - Сокращенное наименование
+    - Наименование контрагента
+
+    Возвращает список словарей с ключами:
+    inn, kpp, email, short_name, name
+    """
+    schema = _load_schema()
+    url = sheet_url or os.environ.get("GOOGLE_SHEET_URL") or schema.get("google_sheet_url")
+    if not url:
+        raise ValueError("Укажите GOOGLE_SHEET_URL в .env или google_sheet_url в config/schema.json")
+
+    cp_sheet_name = (
+        sheet_name
+        or os.environ.get("GOOGLE_COUNTERPARTIES_SHEET_NAME")
+        or schema.get("google_counterparties_sheet_name")
+        or "Контрагенты"
+    )
+    cp_sheet_name = str(cp_sheet_name or "").strip() or "Контрагенты"
+
+    client = get_sheets_client()
+    sheet_id, _ = _parse_sheet_url(url)
+    spreadsheet = client.open_by_key(sheet_id)
+    worksheet = spreadsheet.worksheet(cp_sheet_name)
+
+    required_headers = [
+        "ИНН контрагента",
+        "КПП контрагента",
+        "Email",
+        "Сокращенное наименование",
+        "Наименование контрагента",
+    ]
+    try:
+        records = worksheet.get_all_records(expected_headers=required_headers)
+    except Exception:
+        values = worksheet.get_all_values()
+        if not values or len(values) < 2:
+            return []
+        header_row_idx = None
+        for idx, row in enumerate(values):
+            cells = [str(c).strip() if c else "" for c in row]
+            if (
+                "ИНН контрагента" in cells
+                and "Сокращенное наименование" in cells
+                and "Наименование контрагента" in cells
+            ):
+                header_row_idx = idx
+                break
+        if header_row_idx is None:
+            return []
+        header_row = [str(c).strip() if c else "" for c in values[header_row_idx]]
+        col_indices = {h: i for i, h in enumerate(header_row) if h in required_headers}
+        records = []
+        for row in values[header_row_idx + 1 :]:
+            rec = {h: row[col_indices[h]] if h in col_indices and len(row) > col_indices[h] else "" for h in required_headers}
+            records.append(rec)
+
+    counterparties = []
+    for row in records:
+        inn = str(row.get("ИНН контрагента", "") or "").strip()
+        kpp = str(row.get("КПП контрагента", "") or "").strip()
+        email = str(row.get("Email", "") or "").strip()
+        short_name = str(row.get("Сокращенное наименование", "") or "").strip()
+        name = str(row.get("Наименование контрагента", "") or "").strip()
+
+        if not any([inn, kpp, email, short_name, name]):
+            continue
+
+        counterparties.append(
+            {
+                "inn": inn,
+                "kpp": kpp,
+                "email": email,
+                "short_name": short_name,
+                "name": name,
+            }
+        )
+    return counterparties

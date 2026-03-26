@@ -1,5 +1,6 @@
 {
   "google_sheet_url": "",
+  "google_counterparties_sheet_name": "Контрагенты",
   "google_sheet_columns": [
     "№",
     "Месяц",

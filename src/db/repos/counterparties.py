@@ -1,7 +1,7 @@
 # Репозиторий контрагентов
 from __future__ import annotations
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from src.db.models import Counterparty
@@ -26,11 +26,18 @@ def get_by_name_and_note(
     return result.scalars().first()
 
 
+def get_by_inn(session: Session, inn: str) -> Counterparty | None:
+    """Получение контрагента по ИНН."""
+    result = session.execute(
+        select(Counterparty).where(Counterparty.inn == inn)
+    )
+    return result.scalars().first()
+
+
 def get_by_short_name(
     session: Session, short_name: str, note: str
 ) -> Counterparty | None:
     """Получение контрагента по короткому имени."""
-    note_val = note or ""
     result = session.execute(
         select(Counterparty)
         .where(Counterparty.short_name == short_name)

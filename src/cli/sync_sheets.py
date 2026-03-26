@@ -1,5 +1,5 @@
 """
-CLI: синхронизация работ из Google Sheets в MySQL.
+CLI: синхронизация данных из Google Sheets в MySQL (контрагенты + работы).
 Запуск: python3 -m src.cli.sync_sheets
 """
 from __future__ import annotations
@@ -36,7 +36,7 @@ def _parse_date_arg(value: str) -> date:
 def main() -> None:
     """Запуск синхронизации Sheets → MySQL."""
 
-    parser = argparse.ArgumentParser(description="Синхронизация работ из Google Sheets в MySQL")
+    parser = argparse.ArgumentParser(description="Синхронизация данных из Google Sheets в MySQL")
     parser.add_argument(
         "--from-date",
         type=_parse_date_arg,

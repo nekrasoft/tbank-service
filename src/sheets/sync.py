@@ -1,5 +1,5 @@
 """
-Синхронизация работ из Google Sheets в MySQL.
+Синхронизация данных из Google Sheets в MySQL.
 """
 from __future__ import annotations
 
@@ -8,11 +8,15 @@ import re
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
+from sqlalchemy.orm import Session
+
 from src.db.connection import get_session
+from src.db.repos import counterparties as cp_repo
 from src.db.repos import works as works_repo
-from src.sheets.reader import read_works
+from src.sheets.reader import read_counterparties, read_works
 
 logger = logging.getLogger(__name__)
+_VALID_INN_LENGTHS = {10, 12}
 
 
 def _parse_date(date_str: str) -> date | None:
@@ -57,24 +61,161 @@ def _parse_revenue(value: str | None) -> Decimal | None:
         return None
 
 
+def _digits_only(value: str | None) -> str:
+    return re.sub(r"\D", "", str(value or ""))
+
+
+def _normalize_inn(value: str | None) -> str:
+    inn = _digits_only(value)
+    if not inn:
+        return ""
+    if len(inn) not in _VALID_INN_LENGTHS:
+        return ""
+    return inn
+
+
+def _normalize_kpp(value: str | None) -> str:
+    kpp = _digits_only(value)
+    if not kpp:
+        return ""
+    if set(kpp) == {"0"}:
+        return ""
+    if len(kpp) != 9:
+        return ""
+    return kpp
+
+
+def _normalize_email_list(value: str | None) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    parts = [part.strip() for part in re.split(r"[;,]", raw) if part and part.strip()]
+    return ", ".join(parts)
+
+
+def _sync_counterparties_rows(session: Session, rows: list[dict]) -> tuple[int, int, int]:
+    """
+    Upsert контрагентов в counterparties по данным из Sheets.
+
+    Возвращает (created, updated, skipped).
+    """
+    created = 0
+    updated = 0
+    skipped = 0
+
+    for row in rows:
+        raw_name = str(row.get("name", "") or "").strip()
+        raw_short_name = str(row.get("short_name", "") or "").strip()
+        raw_inn = str(row.get("inn", "") or "").strip()
+        raw_kpp = str(row.get("kpp", "") or "").strip()
+        raw_email = str(row.get("email", "") or "").strip()
+
+        inn = _normalize_inn(raw_inn)
+        if not inn:
+            skipped += 1
+            logger.warning(
+                "Синхронизация контрагентов: пропуск строки с невалидным ИНН '%s' (short_name='%s', name='%s')",
+                raw_inn,
+                raw_short_name,
+                raw_name,
+            )
+            continue
+
+        if not raw_short_name or not raw_name:
+            skipped += 1
+            logger.warning(
+                "Синхронизация контрагентов: пропуск строки без short_name/name (inn='%s')",
+                inn,
+            )
+            continue
+
+        kpp = _normalize_kpp(raw_kpp)
+        raw_kpp_digits = _digits_only(raw_kpp)
+        if raw_kpp and raw_kpp_digits and set(raw_kpp_digits) != {"0"} and not kpp:
+            logger.warning(
+                "Синхронизация контрагентов: КПП '%s' для ИНН %s невалиден, сохраняем пустым",
+                raw_kpp,
+                inn,
+            )
+        email = _normalize_email_list(raw_email)
+
+        by_inn = cp_repo.get_by_inn(session, inn)
+        by_short_name = cp_repo.get_by_short_name(session, raw_short_name, "")
+
+        if by_inn and by_short_name and by_inn.id != by_short_name.id:
+            skipped += 1
+            logger.warning(
+                "Синхронизация контрагентов: конфликт данных для inn=%s и short_name='%s' (разные записи id=%s и id=%s), строка пропущена",
+                inn,
+                raw_short_name,
+                by_inn.id,
+                by_short_name.id,
+            )
+            continue
+
+        cp = by_inn or by_short_name
+        if cp is None:
+            cp_repo.create(
+                session,
+                name=raw_name,
+                short_name=raw_short_name,
+                inn=inn,
+                kpp=kpp,
+                email=email,
+            )
+            created += 1
+            continue
+
+        changed = False
+        if cp.name != raw_name:
+            cp.name = raw_name
+            changed = True
+        if cp.short_name != raw_short_name:
+            cp.short_name = raw_short_name
+            changed = True
+        if cp.inn != inn:
+            cp.inn = inn
+            changed = True
+        if (cp.kpp or "") != kpp:
+            cp.kpp = kpp
+            changed = True
+        if (cp.email or "") != email:
+            cp.email = email
+            changed = True
+
+        if changed:
+            session.flush()
+            updated += 1
+
+    return created, updated, skipped
+
+
 def sync_sheets_to_mysql(
     sheet_url: str | None = None,
     sheet_name: str | None = None,
     from_date: date | None = None,
+    counterparties_sheet_name: str | None = None,
 ) -> int:
     """
-    Синхронизация работ из Google Sheets в MySQL.
-    Читает строки с датой >= from_date, если он задан, иначе >= последней импортированной.
-    Дедупликация по sheet_row_hash.
+    Синхронизация данных из Google Sheets в MySQL.
+
+    1) Контрагенты (лист `Контрагенты`) → таблица counterparties (upsert).
+    2) Работы (основной лист) → таблица works.
+
+    Для работ читаются строки с датой >= from_date, если он задан, иначе >= последней импортированной.
+    Для работ применяется дедупликация по sheet_row_hash.
     Возвращает количество добавленных строк.
     """
     session = get_session()
     try:
+        cp_rows = read_counterparties(
+            sheet_url=sheet_url,
+            sheet_name=counterparties_sheet_name,
+        )
+        cp_created, cp_updated, cp_skipped = _sync_counterparties_rows(session, cp_rows)
+
         last_date = from_date or works_repo.get_max_date(session)
         rows = read_works(sheet_url=sheet_url, sheet_name=sheet_name, last_date=last_date)
-        if not rows:
-            logger.info("Синхронизация: в таблице нет строк для импорта")
-            return 0
 
         added = 0
         revenue_updated = 0
@@ -115,9 +256,13 @@ def sync_sheets_to_mysql(
                 sheet_row_hash=row["sheet_row_hash"],
             )
             added += 1
+
         session.commit()
         logger.info(
-            "Синхронизация: добавлено %s новых работ, обновлено выручки %s (обработано строк: %s)",
+            "Синхронизация: контрагенты — создано %s, обновлено %s, пропущено %s; работы — добавлено %s, обновлено выручки %s (обработано строк: %s)",
+            cp_created,
+            cp_updated,
+            cp_skipped,
             added,
             revenue_updated,
             len(rows),
