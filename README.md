@@ -57,12 +57,13 @@ python3 -m src.cli.import_counterparties_to_bitrix24
 ## Импорт Контрагентов В Bitrix24
 
 - Для импорта используется входящий вебхук `BITRIX24_WEBHOOK_URL` и метод `crm.company.add`.
-- Скрипт читает все записи из таблицы `counterparties` и создаёт компании в Bitrix24.
+- Скрипт читает все записи из таблицы `counterparties`, создаёт компании в Bitrix24 и заполняет реквизиты организации (`RQ_INN`, `RQ_KPP`) через `crm.requisite.*`.
 - Повторный запуск идемпотентный: перед созданием выполняется поиск через `crm.company.list`, и уже существующие компании пропускаются.
 - Поиск выполняется в порядке:
   - `BITRIX24_COMPANY_INN_FIELD` (+ `BITRIX24_COMPANY_KPP_FIELD`, если задано)
   - `BITRIX24_COMPANY_SHORT_NAME_FIELD`
   - fallback по точному `TITLE`
+- Для реквизитов используется `BITRIX24_REQUISITE_PRESET_ID` (если задан), иначе выбирается активный preset по `BITRIX24_REQUISITE_COUNTRY_ID` (по умолчанию `1`, РФ).
 - Обязательный минимум для `.env`:
 
 ```env
@@ -80,6 +81,9 @@ BITRIX24_WEBHOOK_URL=https://<portal>.bitrix24.ru/rest/<user_id>/<code>
   - `BITRIX24_COMPANY_KPP_FIELD`
   - `BITRIX24_COMPANY_NOTE_FIELD`
   - `BITRIX24_COMPANY_INVOICE_SCHEDULE_FIELD`
+- Настройки реквизитов:
+  - `BITRIX24_REQUISITE_PRESET_ID` — зафиксировать preset реквизитов
+  - `BITRIX24_REQUISITE_COUNTRY_ID` — страна для автоподбора preset (default `1`)
 
 ## Override Email Для Отладки
 

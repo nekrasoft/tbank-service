@@ -26,6 +26,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 _DEFAULT_DELAY_SEC = 0.35
+_BITRIX_ENTITY_TYPE_COMPANY = 4
+_DEFAULT_REQUISITE_COUNTRY_ID = 1
 _CUSTOM_FIELD_ENV_TO_ATTR = {
     "BITRIX24_COMPANY_SHORT_NAME_FIELD": "short_name",
     "BITRIX24_COMPANY_INN_FIELD": "inn",
@@ -40,6 +42,13 @@ def _parse_int(value) -> int | None:
         return int(str(value).strip())
     except (TypeError, ValueError):
         return None
+
+
+def _parse_positive_int(value) -> int | None:
+    parsed = _parse_int(value)
+    if parsed is None or parsed <= 0:
+        return None
+    return parsed
 
 
 def _get_delay_sec() -> float:
@@ -150,6 +159,132 @@ def _find_existing_company_id(counterparty) -> tuple[int | None, str | None]:
     return None, None
 
 
+def _resolve_requisite_preset_id() -> int:
+    """
+    Определяет preset_id для crm.requisite.add.
+
+    Приоритет:
+    1) BITRIX24_REQUISITE_PRESET_ID
+    2) Поиск по BITRIX24_REQUISITE_COUNTRY_ID (default 1)
+    """
+    from src.bitrix.client import list_requisite_preset_fields, list_requisite_presets
+
+    explicit = _parse_positive_int(os.environ.get("BITRIX24_REQUISITE_PRESET_ID"))
+    if explicit is not None:
+        return explicit
+
+    country_id = _parse_positive_int(os.environ.get("BITRIX24_REQUISITE_COUNTRY_ID")) or _DEFAULT_REQUISITE_COUNTRY_ID
+    presets = list_requisite_presets(
+        filter_fields={"COUNTRY_ID": country_id, "ACTIVE": "Y"},
+        select_fields=["ID", "NAME", "COUNTRY_ID", "ACTIVE", "SORT"],
+        order_fields={"SORT": "ASC"},
+        limit=100,
+    )
+    if not presets:
+        presets = list_requisite_presets(
+            filter_fields={"ACTIVE": "Y"},
+            select_fields=["ID", "NAME", "COUNTRY_ID", "ACTIVE", "SORT"],
+            order_fields={"SORT": "ASC"},
+            limit=100,
+        )
+    if not presets:
+        raise RuntimeError("Bitrix24: не найдено активных шаблонов реквизитов (crm.requisite.preset.list)")
+
+    # Предпочитаем шаблон, где присутствуют оба поля: RQ_INN и RQ_KPP.
+    for preset in presets:
+        preset_id = _parse_positive_int(preset.get("ID"))
+        if preset_id is None:
+            continue
+        preset_fields = list_requisite_preset_fields(preset_id=preset_id)
+        field_names = {str(item.get("FIELD_NAME")) for item in preset_fields}
+        if "RQ_INN" in field_names and "RQ_KPP" in field_names:
+            return preset_id
+
+    fallback_id = _parse_positive_int(presets[0].get("ID"))
+    if fallback_id is None:
+        raise RuntimeError(f"Bitrix24: не удалось извлечь ID шаблона реквизитов: {presets[0]}")
+    logger.warning(
+        "Bitrix24: не найден preset с RQ_INN/RQ_KPP, используем первый доступный preset_id=%s",
+        fallback_id,
+    )
+    return fallback_id
+
+
+def _ensure_company_requisite(*, counterparty, company_id: int, preset_id: int) -> tuple[str, int | None]:
+    """
+    Гарантирует наличие реквизита компании с INN/KPP.
+
+    Возвращает:
+    - ("created", requisite_id)
+    - ("updated", requisite_id)
+    - ("exists", requisite_id)
+    - ("skipped", None)
+    """
+    from src.bitrix.client import add_requisite, list_requisites, update_requisite
+
+    inn = str(counterparty.inn or "").strip()
+    kpp = str(counterparty.kpp or "").strip()
+    if not inn and not kpp:
+        return "skipped", None
+
+    requisites = list_requisites(
+        filter_fields={"ENTITY_TYPE_ID": _BITRIX_ENTITY_TYPE_COMPANY, "ENTITY_ID": int(company_id)},
+        select_fields=["ID", "NAME", "RQ_INN", "RQ_KPP"],
+        order_fields={"ID": "ASC"},
+    )
+
+    # 1) Уже есть точное совпадение — ничего не делаем.
+    for req in requisites:
+        req_id = _parse_positive_int(req.get("ID"))
+        req_inn = str(req.get("RQ_INN") or "").strip()
+        req_kpp = str(req.get("RQ_KPP") or "").strip()
+        if req_id is None:
+            continue
+        if req_inn == inn and (not kpp or req_kpp == kpp):
+            return "exists", req_id
+
+    # 2) Если есть реквизит с тем же INN или без INN — обновляем его.
+    candidate_id: int | None = None
+    candidate_inn = ""
+    candidate_kpp = ""
+    for req in requisites:
+        req_id = _parse_positive_int(req.get("ID"))
+        req_inn = str(req.get("RQ_INN") or "").strip()
+        req_kpp = str(req.get("RQ_KPP") or "").strip()
+        if req_id is None:
+            continue
+        if not req_inn or req_inn == inn:
+            candidate_id = req_id
+            candidate_inn = req_inn
+            candidate_kpp = req_kpp
+            break
+
+    if candidate_id is not None:
+        update_fields: dict[str, str] = {}
+        if inn and candidate_inn != inn:
+            update_fields["RQ_INN"] = inn
+        if kpp and candidate_kpp != kpp:
+            update_fields["RQ_KPP"] = kpp
+        if not update_fields:
+            return "exists", candidate_id
+        updated = update_requisite(requisite_id=candidate_id, fields=update_fields)
+        if not updated:
+            raise RuntimeError(f"Bitrix24: crm.requisite.update вернул false для id={candidate_id}")
+        return "updated", candidate_id
+
+    # 3) Реквизитов нет/не подходят — создаём новый.
+    requisite_name = f"Реквизиты {counterparty.short_name}".strip()[:255]
+    created_id = add_requisite(
+        entity_type_id=_BITRIX_ENTITY_TYPE_COMPANY,
+        entity_id=int(company_id),
+        preset_id=int(preset_id),
+        name=requisite_name,
+        rq_inn=inn,
+        rq_kpp=kpp or None,
+    )
+    return "created", created_id
+
+
 def _load_counterparties(limit: int | None, short_names: list[str] | None):
     from src.db.connection import get_session
     from src.db.repos import counterparties as cp_repo
@@ -189,6 +324,15 @@ def main() -> None:
         logger.error("Не задан BITRIX24_WEBHOOK_URL в .env")
         sys.exit(1)
 
+    requisite_preset_id: int | None = None
+    if not args.dry_run:
+        try:
+            requisite_preset_id = _resolve_requisite_preset_id()
+        except Exception as e:
+            logger.error("Не удалось определить preset реквизитов Bitrix24: %s", e)
+            sys.exit(1)
+        logger.info("Используется preset реквизитов Bitrix24: %s", requisite_preset_id)
+
     delay_sec = _get_delay_sec()
     counterparties = _load_counterparties(limit=args.limit, short_names=args.short_name)
     if not counterparties:
@@ -202,6 +346,9 @@ def main() -> None:
     created = 0
     skipped_existing = 0
     planned = 0
+    requisites_created = 0
+    requisites_updated = 0
+    requisites_skipped = 0
     failed = 0
     total = len(counterparties)
 
@@ -224,6 +371,7 @@ def main() -> None:
             existing_id, matched_by = _find_existing_company_id(cp)
             if existing_id is not None:
                 skipped_existing += 1
+                company_id = existing_id
                 logger.info(
                     "[%s/%s] Уже существует '%s' (short_name='%s'), company_id=%s, match=%s",
                     index,
@@ -250,6 +398,30 @@ def main() -> None:
                     cp.short_name,
                     company_id,
                 )
+
+            if requisite_preset_id is None:
+                raise RuntimeError("preset_id реквизитов не определён")
+            requisite_action, requisite_id = _ensure_company_requisite(
+                counterparty=cp,
+                company_id=company_id,
+                preset_id=requisite_preset_id,
+            )
+            if requisite_action == "created":
+                requisites_created += 1
+            elif requisite_action == "updated":
+                requisites_updated += 1
+            else:
+                requisites_skipped += 1
+            logger.info(
+                "[%s/%s] Реквизиты '%s': action=%s, requisite_id=%s, inn=%s, kpp=%s",
+                index,
+                total,
+                cp.short_name,
+                requisite_action,
+                requisite_id,
+                cp.inn,
+                cp.kpp or "",
+            )
         except Exception as e:
             failed += 1
             logger.error(
@@ -270,9 +442,14 @@ def main() -> None:
         logger.info("DRY-RUN завершён. Проверено: %s, всего: %s", planned, total)
     else:
         logger.info(
-            "Импорт завершён. Создано: %s, пропущено (уже есть): %s, ошибок: %s, всего: %s",
+            "Импорт завершён. Компаний создано: %s, компаний пропущено (уже есть): %s, "
+            "реквизитов создано: %s, реквизитов обновлено: %s, реквизитов без изменений: %s, "
+            "ошибок: %s, всего: %s",
             created,
             skipped_existing,
+            requisites_created,
+            requisites_updated,
+            requisites_skipped,
             failed,
             total,
         )

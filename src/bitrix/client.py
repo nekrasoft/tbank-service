@@ -72,6 +72,53 @@ def _call_method(method_name: str, payload: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
+def _call_list_method(
+    *,
+    method_name: str,
+    filter_fields: dict[str, Any] | None = None,
+    select_fields: list[str] | None = None,
+    order_fields: dict[str, str] | None = None,
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
+    """Универсальный листинг с пагинацией (result + next)."""
+    result_items: list[dict[str, Any]] = []
+    start = 0
+    pages = 0
+
+    while True:
+        pages += 1
+        if pages > 500:
+            raise RuntimeError(f"Bitrix24: слишком много страниц при {method_name}")
+
+        payload: dict[str, Any] = {
+            "filter": filter_fields or {},
+            "select": select_fields or ["ID"],
+            "order": order_fields or {"ID": "ASC"},
+            "start": start,
+        }
+        data = _call_method(method_name, payload)
+        page_items = data.get("result")
+        if not isinstance(page_items, list):
+            raise RuntimeError(f"Неожиданный ответ Bitrix24 {method_name}: {data}")
+
+        for item in page_items:
+            if isinstance(item, dict):
+                result_items.append(item)
+            else:
+                raise RuntimeError(f"Bitrix24: неожиданный элемент result: {item}")
+
+        if limit is not None and limit > 0 and len(result_items) >= limit:
+            return result_items[:limit]
+
+        next_start = data.get("next")
+        if next_start is None:
+            return result_items
+        try:
+            start = int(next_start)
+        except (TypeError, ValueError):
+            raise RuntimeError(f"Bitrix24: неожиданный next в {method_name}: {data}") from None
+
+
 def _normalize_emails(value: str | list[str] | None) -> list[str]:
     """Нормализация email(ов) из строки/списка в уникальный список."""
     if value is None:
@@ -171,39 +218,133 @@ def list_companies(
     limit: int | None = None,
 ) -> list[dict[str, Any]]:
     """Получение списка компаний из Bitrix24 по фильтру crm.company.list."""
-    result_items: list[dict[str, Any]] = []
-    start = 0
-    pages = 0
+    return _call_list_method(
+        method_name="crm.company.list",
+        filter_fields=filter_fields,
+        select_fields=select_fields or ["ID", "TITLE"],
+        order_fields=order_fields or {"ID": "ASC"},
+        limit=limit,
+    )
 
-    while True:
-        pages += 1
-        if pages > 500:
-            raise RuntimeError("Bitrix24: слишком много страниц при crm.company.list")
 
-        payload: dict[str, Any] = {
-            "filter": filter_fields or {},
-            "select": select_fields or ["ID", "TITLE"],
-            "order": order_fields or {"ID": "ASC"},
-            "start": start,
-        }
-        data = _call_method("crm.company.list", payload)
-        page_items = data.get("result")
-        if not isinstance(page_items, list):
-            raise RuntimeError(f"Неожиданный ответ Bitrix24 crm.company.list: {data}")
+def list_requisites(
+    *,
+    filter_fields: dict[str, Any],
+    select_fields: list[str] | None = None,
+    order_fields: dict[str, str] | None = None,
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
+    """Получение списка реквизитов по фильтру crm.requisite.list."""
+    return _call_list_method(
+        method_name="crm.requisite.list",
+        filter_fields=filter_fields,
+        select_fields=select_fields or ["ID", "ENTITY_TYPE_ID", "ENTITY_ID", "PRESET_ID", "NAME", "RQ_INN", "RQ_KPP"],
+        order_fields=order_fields or {"ID": "ASC"},
+        limit=limit,
+    )
 
-        for item in page_items:
-            if isinstance(item, dict):
-                result_items.append(item)
-            else:
-                raise RuntimeError(f"Bitrix24: неожиданный элемент result: {item}")
 
-        if limit is not None and limit > 0 and len(result_items) >= limit:
-            return result_items[:limit]
+def list_requisite_presets(
+    *,
+    filter_fields: dict[str, Any],
+    select_fields: list[str] | None = None,
+    order_fields: dict[str, str] | None = None,
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
+    """Получение списка шаблонов реквизитов по фильтру crm.requisite.preset.list."""
+    return _call_list_method(
+        method_name="crm.requisite.preset.list",
+        filter_fields=filter_fields,
+        select_fields=select_fields or ["ID", "NAME", "COUNTRY_ID", "ACTIVE", "SORT"],
+        order_fields=order_fields or {"ID": "ASC"},
+        limit=limit,
+    )
 
-        next_start = data.get("next")
-        if next_start is None:
-            return result_items
-        try:
-            start = int(next_start)
-        except (TypeError, ValueError):
-            raise RuntimeError(f"Bitrix24: неожиданный next в crm.company.list: {data}") from None
+
+def list_requisite_preset_fields(*, preset_id: int) -> list[dict[str, Any]]:
+    """Список полей конкретного шаблона реквизитов (crm.requisite.preset.field.list)."""
+    data = _call_method(
+        "crm.requisite.preset.field.list",
+        {
+            "preset": {"ID": int(preset_id)},
+        },
+    )
+    result = data.get("result")
+    if not isinstance(result, list):
+        raise RuntimeError(f"Неожиданный ответ Bitrix24 crm.requisite.preset.field.list: {data}")
+    normalized: list[dict[str, Any]] = []
+    for item in result:
+        if isinstance(item, dict):
+            normalized.append(item)
+        else:
+            raise RuntimeError(f"Bitrix24: неожиданный элемент result: {item}")
+    return normalized
+
+
+def add_requisite(
+    *,
+    entity_type_id: int,
+    entity_id: int,
+    preset_id: int,
+    name: str,
+    rq_inn: str | None = None,
+    rq_kpp: str | None = None,
+    fields: dict[str, Any] | None = None,
+) -> int:
+    """Создание реквизита для CRM-сущности (crm.requisite.add)."""
+    requisite_fields: dict[str, Any] = {
+        "ENTITY_TYPE_ID": int(entity_type_id),
+        "ENTITY_ID": int(entity_id),
+        "PRESET_ID": int(preset_id),
+        "NAME": str(name).strip()[:255],
+    }
+
+    inn_norm = (rq_inn or "").strip()
+    if inn_norm:
+        requisite_fields["RQ_INN"] = inn_norm
+    kpp_norm = (rq_kpp or "").strip()
+    if kpp_norm:
+        requisite_fields["RQ_KPP"] = kpp_norm
+
+    for field_name, value in (fields or {}).items():
+        key = str(field_name).strip()
+        if not key:
+            continue
+        value_norm = (value or "").strip() if isinstance(value, str) else value
+        if value_norm in (None, ""):
+            continue
+        requisite_fields[key] = value_norm
+
+    data = _call_method(
+        "crm.requisite.add",
+        {
+            "fields": requisite_fields,
+        },
+    )
+    result = data.get("result")
+    if isinstance(result, int):
+        return result
+    if isinstance(result, str) and result.isdigit():
+        return int(result)
+    raise RuntimeError(f"Неожиданный ответ Bitrix24 crm.requisite.add: {data}")
+
+
+def update_requisite(*, requisite_id: int, fields: dict[str, Any]) -> bool:
+    """Обновление реквизита (crm.requisite.update)."""
+    if not fields:
+        return True
+    data = _call_method(
+        "crm.requisite.update",
+        {
+            "id": int(requisite_id),
+            "fields": fields,
+        },
+    )
+    result = data.get("result")
+    if isinstance(result, bool):
+        return result
+    if isinstance(result, int):
+        return result != 0
+    if isinstance(result, str):
+        return result.strip().lower() in ("1", "y", "yes", "true")
+    raise RuntimeError(f"Неожиданный ответ Bitrix24 crm.requisite.update: {data}")
