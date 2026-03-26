@@ -72,7 +72,7 @@ def _build_comments(counterparty) -> str:
         "Импорт из tbank-service",
         f"short_name: {counterparty.short_name}",
         f"inn: {counterparty.inn}",
-        f"invoice_schedule: {counterparty.invoice_schedule or 'monthly'}",
+        f"invoice_schedule: {counterparty.invoice_schedule or '2weeks'}",
     ]
     if counterparty.kpp:
         lines.append(f"kpp: {counterparty.kpp}")

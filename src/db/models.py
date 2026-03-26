@@ -38,7 +38,7 @@ class Counterparty(Base):
     invoice_schedule = Column(
         String(20),
         nullable=False,
-        default="monthly",
+        default="2weeks",
         comment="Периодичность выставления: monthly, 2weeks, daily",
     )
     created_at = Column(DateTime, default=datetime.utcnow)

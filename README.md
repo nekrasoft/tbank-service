@@ -118,6 +118,7 @@ BITRIX24_WEBHOOK_URL=https://<portal>.bitrix24.ru/rest/<user_id>/<code>
   - `Наименование контрагента`
 - При синхронизации выполняется upsert в таблицу `counterparties`:
   - новые контрагенты создаются;
+  - для новых контрагентов `invoice_schedule` по умолчанию: `2weeks`;
   - существующие обновляются по `inn`/`short_name`;
   - поля `phone`, `note`, `invoice_schedule` не перезаписываются из Sheets.
 
