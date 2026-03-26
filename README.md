@@ -58,6 +58,11 @@ python3 -m src.cli.import_counterparties_to_bitrix24
 
 - Для импорта используется входящий вебхук `BITRIX24_WEBHOOK_URL` и метод `crm.company.add`.
 - Скрипт читает все записи из таблицы `counterparties` и создаёт компании в Bitrix24.
+- Повторный запуск идемпотентный: перед созданием выполняется поиск через `crm.company.list`, и уже существующие компании пропускаются.
+- Поиск выполняется в порядке:
+  - `BITRIX24_COMPANY_INN_FIELD` (+ `BITRIX24_COMPANY_KPP_FIELD`, если задано)
+  - `BITRIX24_COMPANY_SHORT_NAME_FIELD`
+  - fallback по точному `TITLE`
 - Обязательный минимум для `.env`:
 
 ```env

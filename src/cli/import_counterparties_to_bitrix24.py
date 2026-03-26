@@ -35,6 +35,13 @@ _CUSTOM_FIELD_ENV_TO_ATTR = {
 }
 
 
+def _parse_int(value) -> int | None:
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
 def _get_delay_sec() -> float:
     raw = (os.environ.get("BITRIX24_IMPORT_DELAY_SEC") or "").strip()
     if not raw:
@@ -76,6 +83,71 @@ def _build_custom_fields(counterparty) -> dict[str, str]:
             continue
         fields[bitrix_field] = str(value)
     return fields
+
+
+def _build_lookup_filters(counterparty) -> list[tuple[str, dict[str, str]]]:
+    """Формирует фильтры поиска компании в Bitrix24 по приоритету точности."""
+    inn_field = (os.environ.get("BITRIX24_COMPANY_INN_FIELD") or "").strip()
+    kpp_field = (os.environ.get("BITRIX24_COMPANY_KPP_FIELD") or "").strip()
+    short_name_field = (os.environ.get("BITRIX24_COMPANY_SHORT_NAME_FIELD") or "").strip()
+
+    filters: list[tuple[str, dict[str, str]]] = []
+    if inn_field and counterparty.inn and kpp_field and counterparty.kpp:
+        filters.append(
+            (
+                "custom INN+KPP",
+                {
+                    inn_field: str(counterparty.inn),
+                    kpp_field: str(counterparty.kpp),
+                },
+            )
+        )
+    if inn_field and counterparty.inn:
+        filters.append(("custom INN", {inn_field: str(counterparty.inn)}))
+    if short_name_field and counterparty.short_name:
+        filters.append(("custom short_name", {short_name_field: str(counterparty.short_name)}))
+
+    # Fallback: точное совпадение имени компании.
+    if counterparty.name:
+        filters.append(("TITLE", {"TITLE": str(counterparty.name)}))
+
+    unique_filters: list[tuple[str, dict[str, str]]] = []
+    seen: set[tuple[tuple[str, str], ...]] = set()
+    for reason, filter_fields in filters:
+        key = tuple(sorted((str(k), str(v)) for k, v in filter_fields.items()))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique_filters.append((reason, filter_fields))
+    return unique_filters
+
+
+def _find_existing_company_id(counterparty) -> tuple[int | None, str | None]:
+    from src.bitrix.client import list_companies
+
+    for reason, filter_fields in _build_lookup_filters(counterparty):
+        companies = list_companies(
+            filter_fields=filter_fields,
+            select_fields=["ID", "TITLE"],
+            order_fields={"ID": "ASC"},
+            limit=2,
+        )
+        company_ids = [_parse_int(company.get("ID")) for company in companies]
+        company_ids = [company_id for company_id in company_ids if company_id is not None]
+        if not company_ids:
+            continue
+
+        if len(company_ids) > 1:
+            logger.warning(
+                "Для '%s' найдено несколько компаний по фильтру %s=%s, используем ID=%s",
+                counterparty.short_name,
+                reason,
+                filter_fields,
+                company_ids[0],
+            )
+        return company_ids[0], reason
+
+    return None, None
 
 
 def _load_counterparties(limit: int | None, short_names: list[str] | None):
@@ -127,7 +199,9 @@ def main() -> None:
     if args.dry_run:
         logger.info("Режим DRY-RUN: запросы в Bitrix24 отправляться не будут")
 
-    imported = 0
+    created = 0
+    skipped_existing = 0
+    planned = 0
     failed = 0
     total = len(counterparties)
 
@@ -143,26 +217,39 @@ def main() -> None:
                 cp.name,
                 custom_fields,
             )
-            imported += 1
+            planned += 1
             continue
 
         try:
-            company_id = add_company(
-                title=cp.name,
-                email=cp.email,
-                phone=cp.phone,
-                comments=_build_comments(cp),
-                custom_fields=custom_fields,
-            )
-            imported += 1
-            logger.info(
-                "[%s/%s] Импортирован '%s' (short_name='%s'), company_id=%s",
-                index,
-                total,
-                cp.name,
-                cp.short_name,
-                company_id,
-            )
+            existing_id, matched_by = _find_existing_company_id(cp)
+            if existing_id is not None:
+                skipped_existing += 1
+                logger.info(
+                    "[%s/%s] Уже существует '%s' (short_name='%s'), company_id=%s, match=%s",
+                    index,
+                    total,
+                    cp.name,
+                    cp.short_name,
+                    existing_id,
+                    matched_by,
+                )
+            else:
+                company_id = add_company(
+                    title=cp.name,
+                    email=cp.email,
+                    phone=cp.phone,
+                    comments=_build_comments(cp),
+                    custom_fields=custom_fields,
+                )
+                created += 1
+                logger.info(
+                    "[%s/%s] Импортирован '%s' (short_name='%s'), company_id=%s",
+                    index,
+                    total,
+                    cp.name,
+                    cp.short_name,
+                    company_id,
+                )
         except Exception as e:
             failed += 1
             logger.error(
@@ -179,12 +266,16 @@ def main() -> None:
         if delay_sec > 0 and index < total:
             time.sleep(delay_sec)
 
-    logger.info(
-        "Импорт завершён. Успешно: %s, ошибок: %s, всего: %s",
-        imported,
-        failed,
-        total,
-    )
+    if args.dry_run:
+        logger.info("DRY-RUN завершён. Проверено: %s, всего: %s", planned, total)
+    else:
+        logger.info(
+            "Импорт завершён. Создано: %s, пропущено (уже есть): %s, ошибок: %s, всего: %s",
+            created,
+            skipped_existing,
+            failed,
+            total,
+        )
 
     if failed > 0:
         sys.exit(1)
