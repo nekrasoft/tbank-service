@@ -8,6 +8,7 @@ import logging
 import os
 from datetime import datetime, timedelta
 from typing import Any
+from urllib.parse import urlsplit
 
 from src.bitrix.client import add_task
 
@@ -42,10 +43,10 @@ def create_invoice_task(
     invoice_link: str | None = None,
     pdf_url: str | None = None,
     invoice_items: list[dict[str, Any]] | None = None,
-) -> bool:
+) -> str | None:
     """Создаёт задачу в Bitrix24 по факту выставления счёта."""
     if not _is_task_webhook_configured():
-        return False
+        return None
 
     text = _build_task_description(
         counterparty_name=counterparty_name,
@@ -69,11 +70,20 @@ def create_invoice_task(
             priority=_TASK_PRIORITY,
             description_in_bbcode=True,
         )
-        logger.info("Bitrix24 task: создана задача id=%s по счёту %s", task_id, invoice_number)
-        return True
+        task_url = _build_task_url(task_id)
+        if task_url:
+            logger.info(
+                "Bitrix24 task: создана задача id=%s по счёту %s, url=%s",
+                task_id,
+                invoice_number,
+                task_url,
+            )
+        else:
+            logger.info("Bitrix24 task: создана задача id=%s по счёту %s", task_id, invoice_number)
+        return task_url
     except Exception as e:
         logger.error("Bitrix24 task: ошибка создания задачи по счёту %s — %s", invoice_number, e)
-        return False
+        return None
 
 
 def _build_task_description(
@@ -132,3 +142,18 @@ def _calculate_invoice_amount(invoice_items: list[dict[str, Any]] | None) -> Dec
 def _format_money(value: Decimal) -> str:
     """Форматирует сумму в человекочитаемом виде для текста задачи."""
     return f"{value:.2f} ₽"
+
+
+def _build_task_url(task_id: int) -> str | None:
+    """Строит ссылку на задачу Bitrix24 по task_id и webhook-хосту."""
+    webhook = (os.environ.get(_TASK_WEBHOOK_ENV) or "").strip()
+    if not webhook:
+        return None
+    parsed = urlsplit(webhook)
+    if not parsed.scheme or not parsed.netloc:
+        return None
+    portal_base = f"{parsed.scheme}://{parsed.netloc}"
+    return (
+        f"{portal_base}/company/personal/user/{_TASK_RESPONSIBLE_ID}/"
+        f"tasks/task/view/{int(task_id)}/"
+    )

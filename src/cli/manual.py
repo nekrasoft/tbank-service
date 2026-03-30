@@ -332,17 +332,9 @@ def main() -> None:
             )
         except Exception:
             logger.exception("Ошибка Telegram-уведомления по счёту %s", invoice_number)
+        bitrix_task_url: str | None = None
         try:
-            send_max_notification(
-                counterparty_name=counterparty_name,
-                invoice_number=invoice_number,
-                tbank_invoice_id=str(tbank_id) if tbank_id else None,
-                invoice_link=str(invoice_link) if invoice_link else None,
-            )
-        except Exception:
-            logger.exception("Ошибка MAX-уведомления по счёту %s", invoice_number)
-        try:
-            create_invoice_task(
+            bitrix_task_url = create_invoice_task(
                 counterparty_name=counterparty_name,
                 invoice_number=invoice_number,
                 tbank_invoice_id=str(tbank_id) if tbank_id else None,
@@ -352,6 +344,16 @@ def main() -> None:
             )
         except Exception:
             logger.exception("Ошибка создания задачи Bitrix24 по счёту %s", invoice_number)
+        try:
+            send_max_notification(
+                counterparty_name=counterparty_name,
+                invoice_number=invoice_number,
+                tbank_invoice_id=str(tbank_id) if tbank_id else None,
+                invoice_link=str(invoice_link) if invoice_link else None,
+                bitrix_task_url=bitrix_task_url,
+            )
+        except Exception:
+            logger.exception("Ошибка MAX-уведомления по счёту %s", invoice_number)
         time.sleep(0.3)  # Ограничение 4 req/sec
         logger.info("Счёт %s успешно выставлен для %s", invoice_number, counterparty_name)
     except Exception:

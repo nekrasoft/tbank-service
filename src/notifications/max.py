@@ -39,6 +39,7 @@ def build_invoice_notification_text(
     invoice_number: str,
     tbank_invoice_id: str | None = None,
     invoice_link: str | None = None,
+    bitrix_task_url: str | None = None,
 ) -> str:
     """Единый текст уведомления о выставленном счёте."""
     lines = [
@@ -50,6 +51,8 @@ def build_invoice_notification_text(
         lines.append(f"T-Bank ID: {tbank_invoice_id}")
     if invoice_link:
         lines.append(f"Ссылка: {invoice_link}")
+    if bitrix_task_url:
+        lines.append(f"Задача Bitrix24: {bitrix_task_url}")
     lines.extend(
         [
             "",
@@ -65,6 +68,7 @@ def send_invoice_notification(
     invoice_number: str,
     tbank_invoice_id: str | None = None,
     invoice_link: str | None = None,
+    bitrix_task_url: str | None = None,
 ) -> bool:
     """
     Отправка уведомления бухгалтерам о выставленном счёте в MAX.
@@ -73,6 +77,7 @@ def send_invoice_notification(
     :param invoice_number: Номер счёта
     :param tbank_invoice_id: ID счёта в T-Bank
     :param invoice_link: Ссылка на оплату (если есть)
+    :param bitrix_task_url: Ссылка на задачу в Bitrix24 (если есть)
     :return: True при успехе
     """
     token = _get_bot_token()
@@ -92,6 +97,7 @@ def send_invoice_notification(
         invoice_number=invoice_number,
         tbank_invoice_id=tbank_invoice_id,
         invoice_link=invoice_link,
+        bitrix_task_url=bitrix_task_url,
     )
 
     bot = Bot(token=token)
