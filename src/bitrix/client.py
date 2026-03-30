@@ -363,6 +363,7 @@ def add_task(
     *,
     title: str,
     responsible_id: int,
+    auditors: list[int] | None = None,
     description: str | None = None,
     tags: list[str] | None = None,
     deadline: datetime | None = None,
@@ -379,6 +380,17 @@ def add_task(
         "TITLE": str(title).strip()[:255],
         "RESPONSIBLE_ID": int(responsible_id),
     }
+
+    auditors_norm: list[int] = []
+    seen_auditors: set[int] = set()
+    for raw_id in auditors or []:
+        user_id = int(raw_id)
+        if user_id <= 0 or user_id in seen_auditors:
+            continue
+        seen_auditors.add(user_id)
+        auditors_norm.append(user_id)
+    if auditors_norm:
+        fields["AUDITORS"] = auditors_norm
 
     description_norm = (description or "").strip()
     if description_norm:

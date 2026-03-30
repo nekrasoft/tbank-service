@@ -15,7 +15,8 @@ logger = logging.getLogger(__name__)
 
 _TASK_WEBHOOK_ENV = "BITRIX24_TASK_WEBHOOK_URL"
 _TASK_TITLE_PREFIX = "[Киров] Обработать новый счет №"
-_TASK_RESPONSIBLE_ID = 31746
+_TASK_RESPONSIBLE_ID = 31648
+_TASK_AUDITORS = [8, 54, 18, 33036]
 _TASK_TAGS = ["киров", "новый_счет", "отправить в ЭДО"]
 _TASK_PRIORITY = 2
 _task_webhook_missing_logged = False
@@ -61,6 +62,7 @@ def create_invoice_task(
         task_id = add_task(
             title=task_title,
             responsible_id=_TASK_RESPONSIBLE_ID,
+            auditors=_TASK_AUDITORS,
             description=text,
             tags=_TASK_TAGS,
             deadline=deadline,
