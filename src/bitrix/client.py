@@ -370,6 +370,7 @@ def add_task(
     deadline: datetime | None = None,
     priority: int | None = None,
     description_in_bbcode: bool = False,
+    require_result: bool = False,
 ) -> int:
     """
     Создаёт задачу в Bitrix24 методом tasks.task.add.
@@ -436,6 +437,15 @@ def add_task(
         if priority_int not in (0, 1, 2):
             raise ValueError("PRIORITY должен быть одним из значений: 0, 1, 2")
         fields["PRIORITY"] = priority_int
+
+    if require_result:
+        # CODE=3 -> не завершать задачу без результата.
+        fields["SE_PARAMETER"] = [
+            {
+                "VALUE": "Y",
+                "CODE": 3,
+            },
+        ]
 
     data = _call_method(
         "tasks.task.add",

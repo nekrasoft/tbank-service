@@ -20,6 +20,7 @@ _TASK_RESPONSIBLE_ID = 31648
 _TASK_AUDITORS = [8, 54, 18, 33036]
 _TASK_TAGS = ["киров", "новый_счет", "отправить в ЭДО"]
 _TASK_PRIORITY = 2
+_TASK_REQUIRE_RESULT = True
 _task_webhook_missing_logged = False
 
 
@@ -72,6 +73,7 @@ def create_invoice_task(
             deadline=deadline,
             priority=_TASK_PRIORITY,
             description_in_bbcode=True,
+            require_result=_TASK_REQUIRE_RESULT,
         )
         task_url = _build_task_url(task_id)
         if task_url:
