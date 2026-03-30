@@ -89,18 +89,14 @@ def _build_task_description(
     DESCRIPTION_IN_BBCODE=Y нужен, чтобы [B]...[/B] отображался жирным.
     """
     lines = [
-        "[B]Выставлен счёт[/B]",
-        f"Контрагент: {counterparty_name}",
-        f"Номер счёта: {invoice_number}",
+        f"[B]Контрагент[/B]: {counterparty_name}",
     ]
     if invoice_amount is not None:
-        lines.append(f"Сумма счёта: {_format_money(invoice_amount)}")
+        lines.append(f"[B]Сумма[/B]: {_format_money(invoice_amount)}")
     if tbank_invoice_id:
-        lines.append(f"T-Bank ID: {tbank_invoice_id}")
-    if invoice_link:
-        lines.append(f"Ссылка: {invoice_link}")
+        lines.append(f"[B]T-Bank ID[/B]: {tbank_invoice_id}")
     if pdf_url:
-        lines.append(f"PDF счёта: {pdf_url}")
+        lines.append(f"[B]PDF[/B]: {pdf_url}")
     lines.extend(
         [
             "",
