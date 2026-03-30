@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+from datetime import datetime
 from typing import Any
 
 import httpx
@@ -11,17 +12,18 @@ import httpx
 logger = logging.getLogger(__name__)
 
 _EMAIL_SPLIT_RE = re.compile(r"[,;\n]+")
+_METHOD_SEGMENT_RE = re.compile(r"^[a-z][a-z0-9_]*(?:\.[a-z0-9_]+){2,}$")
 
 
-def _get_webhook_url() -> str:
+def _get_webhook_url(*, env_var: str = "BITRIX24_WEBHOOK_URL") -> str:
     """URL входящего вебхука Bitrix24 из .env."""
-    webhook = os.environ.get("BITRIX24_WEBHOOK_URL", "").strip()
+    webhook = os.environ.get(env_var, "").strip()
     if not webhook:
-        raise ValueError("Задайте BITRIX24_WEBHOOK_URL в .env")
+        raise ValueError(f"Задайте {env_var} в .env")
     return webhook.rstrip("/")
 
 
-def _get_webhook_base_url() -> str:
+def _get_webhook_base_url(*, webhook_env_var: str = "BITRIX24_WEBHOOK_URL") -> str:
     """
     Приводит webhook URL к базовому виду без имени метода.
 
@@ -29,27 +31,34 @@ def _get_webhook_base_url() -> str:
     - https://<portal>/rest/<user>/<code>
     - .../crm.company.add
     - .../crm.company.add.json
+    - .../tasks.task.add
+    - .../tasks.task.add.json
     """
-    webhook = _get_webhook_url()
+    webhook = _get_webhook_url(env_var=webhook_env_var)
 
     if webhook.endswith(".json"):
         return webhook.rsplit("/", 1)[0]
 
     last_segment = webhook.rsplit("/", 1)[-1]
-    if last_segment.startswith("crm."):
+    if _METHOD_SEGMENT_RE.fullmatch(last_segment):
         return webhook.rsplit("/", 1)[0]
     return webhook
 
 
-def _method_url(method_name: str) -> str:
+def _method_url(method_name: str, *, webhook_env_var: str = "BITRIX24_WEBHOOK_URL") -> str:
     """Собирает URL метода Bitrix24 из базового webhook URL."""
-    base = _get_webhook_base_url()
+    base = _get_webhook_base_url(webhook_env_var=webhook_env_var)
     return f"{base}/{method_name}.json"
 
 
-def _call_method(method_name: str, payload: dict[str, Any]) -> dict[str, Any]:
+def _call_method(
+    method_name: str,
+    payload: dict[str, Any],
+    *,
+    webhook_env_var: str = "BITRIX24_WEBHOOK_URL",
+) -> dict[str, Any]:
     """Вызов REST-метода Bitrix24 по webhook URL."""
-    url = _method_url(method_name)
+    url = _method_url(method_name, webhook_env_var=webhook_env_var)
     with httpx.Client(timeout=30.0) as client:
         resp = client.post(url, json=payload)
         if resp.is_error:
@@ -348,3 +357,72 @@ def update_requisite(*, requisite_id: int, fields: dict[str, Any]) -> bool:
     if isinstance(result, str):
         return result.strip().lower() in ("1", "y", "yes", "true")
     raise RuntimeError(f"Неожиданный ответ Bitrix24 crm.requisite.update: {data}")
+
+
+def add_task(
+    *,
+    title: str,
+    responsible_id: int,
+    description: str | None = None,
+    tags: list[str] | None = None,
+    deadline: datetime | None = None,
+) -> int:
+    """
+    Создаёт задачу в Bitrix24 методом tasks.task.add.
+
+    Для задач используется отдельный webhook URL:
+    BITRIX24_TASK_WEBHOOK_URL
+    """
+    fields: dict[str, Any] = {
+        "TITLE": str(title).strip()[:255],
+        "RESPONSIBLE_ID": int(responsible_id),
+    }
+
+    description_norm = (description or "").strip()
+    if description_norm:
+        fields["DESCRIPTION"] = description_norm
+
+    tags_norm: list[str] = []
+    seen_tags: set[str] = set()
+    for raw_tag in tags or []:
+        tag = str(raw_tag).strip()
+        if not tag:
+            continue
+        key = tag.lower()
+        if key in seen_tags:
+            continue
+        seen_tags.add(key)
+        tags_norm.append(tag)
+    if tags_norm:
+        fields["TAGS"] = tags_norm
+
+    if deadline is not None:
+        deadline_local = deadline.astimezone() if deadline.tzinfo else deadline.replace(
+            tzinfo=datetime.now().astimezone().tzinfo,
+        )
+        fields["DEADLINE"] = deadline_local.replace(microsecond=0).isoformat()
+
+    data = _call_method(
+        "tasks.task.add",
+        {"fields": fields},
+        webhook_env_var="BITRIX24_TASK_WEBHOOK_URL",
+    )
+    result = data.get("result")
+    if isinstance(result, int):
+        return result
+    if isinstance(result, str) and result.isdigit():
+        return int(result)
+    if isinstance(result, dict):
+        task = result.get("task")
+        if isinstance(task, dict):
+            task_id = task.get("id") or task.get("ID")
+            if isinstance(task_id, int):
+                return task_id
+            if isinstance(task_id, str) and task_id.isdigit():
+                return int(task_id)
+        task_id = result.get("id") or result.get("ID")
+        if isinstance(task_id, int):
+            return task_id
+        if isinstance(task_id, str) and task_id.isdigit():
+            return int(task_id)
+    raise RuntimeError(f"Неожиданный ответ Bitrix24 tasks.task.add: {data}")

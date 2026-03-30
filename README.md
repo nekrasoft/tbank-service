@@ -8,6 +8,7 @@
 - Выставление счетов через T-Bank API
 - Генерация акта (PDF)
 - Отправка в Telegram и MAX бухгалтерам
+- Создание задачи в Bitrix24 после выставления счёта (cron)
 - Cron: автоматическое выставление в последний день месяца
 - Ручное выставление счёта по запросу
 - Импорт контрагентов в Bitrix24 CRM
@@ -68,6 +69,14 @@ python3 -m src.cli.import_counterparties_to_bitrix24
 
 ```env
 BITRIX24_WEBHOOK_URL=https://<portal>.bitrix24.ru/rest/<user_id>/<code>
+```
+
+## Задачи В Bitrix24 По Факту Выставления Счёта
+
+- Для `python3 -m src.cli.cron` можно включить создание задачи через отдельный webhook:
+
+```env
+BITRIX24_TASK_WEBHOOK_URL=https://<portal>.bitrix24.ru/rest/<user_id>/<code>
 ```
 
 - Полезные флаги:

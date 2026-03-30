@@ -33,6 +33,32 @@ def _get_accountants_chat_id() -> int:
         raise ValueError("MAX_ACCOUNTANTS_CHAT_ID должен быть числом") from e
 
 
+def build_invoice_notification_text(
+    *,
+    counterparty_name: str,
+    invoice_number: str,
+    tbank_invoice_id: str | None = None,
+    invoice_link: str | None = None,
+) -> str:
+    """Единый текст уведомления о выставленном счёте."""
+    lines = [
+        "💰 **Выставлен счёт**",
+        f"Контрагент: {counterparty_name}",
+        f"Номер счёта: {invoice_number}",
+    ]
+    if tbank_invoice_id:
+        lines.append(f"T-Bank ID: {tbank_invoice_id}")
+    if invoice_link:
+        lines.append(f"Ссылка: {invoice_link}")
+    lines.extend(
+        [
+            "",
+            "‼️ **Необходимо в ТБанке создать Акт для данного счета и отправить оба документа в ЭДО**",
+        ]
+    )
+    return "\n".join(lines)
+
+
 def send_invoice_notification(
     *,
     counterparty_name: str,
@@ -61,22 +87,12 @@ def send_invoice_notification(
 
     chat_id = _get_accountants_chat_id()
 
-    lines = [
-        "💰 **Выставлен счёт**",
-        f"Контрагент: {counterparty_name}",
-        f"Номер счёта: {invoice_number}",
-    ]
-    if tbank_invoice_id:
-        lines.append(f"T-Bank ID: {tbank_invoice_id}")
-    if invoice_link:
-        lines.append(f"Ссылка: {invoice_link}")
-    lines.extend(
-        [
-            "",
-            "‼️ **Необходимо в ТБанке создать Акт для данного счета и отправить оба документа в ЭДО**",
-        ]
+    text = build_invoice_notification_text(
+        counterparty_name=counterparty_name,
+        invoice_number=invoice_number,
+        tbank_invoice_id=tbank_invoice_id,
+        invoice_link=invoice_link,
     )
-    text = "\n".join(lines)
 
     bot = Bot(token=token)
 
