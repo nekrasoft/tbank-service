@@ -364,6 +364,7 @@ def add_task(
     title: str,
     responsible_id: int,
     auditors: list[int] | None = None,
+    crm_bindings: list[str] | None = None,
     description: str | None = None,
     tags: list[str] | None = None,
     deadline: datetime | None = None,
@@ -391,6 +392,19 @@ def add_task(
         auditors_norm.append(user_id)
     if auditors_norm:
         fields["AUDITORS"] = auditors_norm
+
+    crm_bindings_norm: list[str] = []
+    seen_bindings: set[str] = set()
+    for raw_binding in crm_bindings or []:
+        binding = str(raw_binding).strip()
+        if not binding:
+            continue
+        if binding in seen_bindings:
+            continue
+        seen_bindings.add(binding)
+        crm_bindings_norm.append(binding)
+    if crm_bindings_norm:
+        fields["UF_CRM_TASK"] = crm_bindings_norm
 
     description_norm = (description or "").strip()
     if description_norm:

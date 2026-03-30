@@ -305,6 +305,30 @@ def _load_counterparties(limit: int | None, short_names: list[str] | None):
     return counterparties
 
 
+def _save_company_binding(counterparty_id: int, company_id: int) -> None:
+    """Сохраняет ID компании Bitrix24 в counterparties.bitrix_company_id."""
+    from src.db.connection import get_session
+    from src.db.repos import counterparties as cp_repo
+
+    session = get_session()
+    try:
+        updated = cp_repo.update_bitrix_company_id(
+            session,
+            counterparty_id=int(counterparty_id),
+            bitrix_company_id=int(company_id),
+        )
+        if updated != 1:
+            raise RuntimeError(
+                f"Контрагент id={counterparty_id} не найден для сохранения bitrix_company_id",
+            )
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Импорт контрагентов в Bitrix24 CRM")
     parser.add_argument("--dry-run", action="store_true", help="Не отправлять запросы, только показать что будет импортировано")
@@ -349,6 +373,7 @@ def main() -> None:
     requisites_created = 0
     requisites_updated = 0
     requisites_skipped = 0
+    bindings_saved = 0
     failed = 0
     total = len(counterparties)
 
@@ -412,6 +437,9 @@ def main() -> None:
                 requisites_updated += 1
             else:
                 requisites_skipped += 1
+
+            _save_company_binding(counterparty_id=cp.id, company_id=company_id)
+            bindings_saved += 1
             logger.info(
                 "[%s/%s] Реквизиты '%s': action=%s, requisite_id=%s, inn=%s, kpp=%s",
                 index,
@@ -444,12 +472,13 @@ def main() -> None:
         logger.info(
             "Импорт завершён. Компаний создано: %s, компаний пропущено (уже есть): %s, "
             "реквизитов создано: %s, реквизитов обновлено: %s, реквизитов без изменений: %s, "
-            "ошибок: %s, всего: %s",
+            "связок company_id сохранено: %s, ошибок: %s, всего: %s",
             created,
             skipped_existing,
             requisites_created,
             requisites_updated,
             requisites_skipped,
+            bindings_saved,
             failed,
             total,
         )

@@ -39,6 +39,7 @@ def create_invoice_task(
     *,
     counterparty_name: str,
     invoice_number: str,
+    bitrix_company_id: int | None = None,
     tbank_invoice_id: str | None = None,
     invoice_link: str | None = None,
     pdf_url: str | None = None,
@@ -58,12 +59,14 @@ def create_invoice_task(
     )
     deadline = datetime.now().astimezone() + timedelta(days=1)
     task_title = f"{_TASK_TITLE_PREFIX}{invoice_number}"
+    crm_binding = _build_company_binding(bitrix_company_id)
 
     try:
         task_id = add_task(
             title=task_title,
             responsible_id=_TASK_RESPONSIBLE_ID,
             auditors=_TASK_AUDITORS,
+            crm_bindings=[crm_binding] if crm_binding else None,
             description=text,
             tags=_TASK_TAGS,
             deadline=deadline,
@@ -157,3 +160,16 @@ def _build_task_url(task_id: int) -> str | None:
         f"{portal_base}/company/personal/user/{_TASK_RESPONSIBLE_ID}/"
         f"tasks/task/view/{int(task_id)}/"
     )
+
+
+def _build_company_binding(bitrix_company_id: int | None) -> str | None:
+    """Готовит CRM-привязку компании для UF_CRM_TASK в формате CO_<ID>."""
+    if bitrix_company_id is None:
+        return None
+    try:
+        company_id = int(bitrix_company_id)
+    except (TypeError, ValueError):
+        return None
+    if company_id <= 0:
+        return None
+    return f"CO_{company_id}"

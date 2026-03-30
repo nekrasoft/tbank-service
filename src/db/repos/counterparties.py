@@ -1,7 +1,7 @@
 # Репозиторий контрагентов
 from __future__ import annotations
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from src.db.models import Counterparty
@@ -78,3 +78,19 @@ def create(
     session.flush()
     session.refresh(cp)
     return cp
+
+
+def update_bitrix_company_id(
+    session: Session,
+    *,
+    counterparty_id: int,
+    bitrix_company_id: int | None,
+) -> int:
+    """Обновление привязки контрагента к компании в Bitrix24."""
+    value = None if bitrix_company_id is None else int(bitrix_company_id)
+    result = session.execute(
+        update(Counterparty)
+        .where(Counterparty.id == int(counterparty_id))
+        .values(bitrix_company_id=value)
+    )
+    return int(result.rowcount or 0)
