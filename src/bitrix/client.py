@@ -366,6 +366,8 @@ def add_task(
     description: str | None = None,
     tags: list[str] | None = None,
     deadline: datetime | None = None,
+    priority: int | None = None,
+    description_in_bbcode: bool = False,
 ) -> int:
     """
     Создаёт задачу в Bitrix24 методом tasks.task.add.
@@ -381,6 +383,7 @@ def add_task(
     description_norm = (description or "").strip()
     if description_norm:
         fields["DESCRIPTION"] = description_norm
+        fields["DESCRIPTION_IN_BBCODE"] = "Y" if description_in_bbcode else "N"
 
     tags_norm: list[str] = []
     seen_tags: set[str] = set()
@@ -401,6 +404,12 @@ def add_task(
             tzinfo=datetime.now().astimezone().tzinfo,
         )
         fields["DEADLINE"] = deadline_local.replace(microsecond=0).isoformat()
+
+    if priority is not None:
+        priority_int = int(priority)
+        if priority_int not in (0, 1, 2):
+            raise ValueError("PRIORITY должен быть одним из значений: 0, 1, 2")
+        fields["PRIORITY"] = priority_int
 
     data = _call_method(
         "tasks.task.add",

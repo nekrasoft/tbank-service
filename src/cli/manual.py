@@ -347,6 +347,8 @@ def main() -> None:
                 invoice_number=invoice_number,
                 tbank_invoice_id=str(tbank_id) if tbank_id else None,
                 invoice_link=str(invoice_link) if invoice_link else None,
+                pdf_url=str(pdf_url) if pdf_url else None,
+                invoice_items=prepared["items"],
             )
         except Exception:
             logger.exception("Ошибка создания задачи Bitrix24 по счёту %s", invoice_number)
