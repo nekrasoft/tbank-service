@@ -1,11 +1,13 @@
 """
 CLI: ручное выставление счёта для одного контрагента.
 Запуск: python3 -m src.cli.manual --counterparty "Алтай-Строй"
+Или: python3 -m src.cli.manual --counterparty "Алтай-Строй" --ignore-schedule-window
 --counterparty ожидает короткое имя контрагента (short_name).
 """
 from __future__ import annotations
 
 import argparse
+import calendar
 import logging
 import os
 import sys
@@ -30,8 +32,56 @@ logger = logging.getLogger(__name__)
 # Опциональный override из ENV: если задан, все счета отправляются на этот email.
 DEBUG_FORCE_EMAIL = (os.environ.get("DEBUG_FORCE_EMAIL") or "").strip() or None
 
+# Окна выставления для периодичности.
+MONTHLY_EVENING_START_HOUR = 19
+BIWEEKLY_MIDMONTH_DAY = 15
+BIWEEKLY_MORNING_START_HOUR = 5
+BIWEEKLY_MORNING_END_HOUR = 9
 
-def _prepare_pending_invoice(counterparty: str) -> dict[str, Any] | None:
+
+def _is_last_day_of_month(target_date: date) -> bool:
+    """Проверка: переданная дата — последний день месяца."""
+    _, last_day = calendar.monthrange(target_date.year, target_date.month)
+    return target_date.day == last_day
+
+
+def _is_counterparty_due(invoice_schedule: str | None, run_at: datetime) -> bool:
+    """
+    Проверка, должен ли контрагент выставляться в текущий запуск.
+
+    Поддерживаемые значения:
+    - monthly: последний день месяца, после 21:00
+    - 2weeks: последний день месяца или 15 число утром (08:00-11:59)
+    - daily: в любой запуск
+    """
+    schedule = (invoice_schedule or "monthly").strip().lower()
+
+    if schedule == "daily":
+        return True
+
+    if schedule == "monthly":
+        return _is_last_day_of_month(run_at.date()) and run_at.hour >= MONTHLY_EVENING_START_HOUR
+
+    if schedule == "2weeks":
+        if _is_last_day_of_month(run_at.date()):
+            return True
+        return (
+            run_at.day == BIWEEKLY_MIDMONTH_DAY
+            and BIWEEKLY_MORNING_START_HOUR <= run_at.hour < BIWEEKLY_MORNING_END_HOUR
+        )
+
+    logger.warning(
+        "Неизвестный invoice_schedule='%s', используем monthly-правило",
+        invoice_schedule,
+    )
+    return _is_last_day_of_month(run_at.date()) and run_at.hour >= MONTHLY_EVENING_START_HOUR
+
+
+def _prepare_pending_invoice(
+    counterparty: str,
+    *,
+    ignore_schedule_window: bool = False,
+) -> dict[str, Any] | None:
     """Подготовка и фиксация pending-счёта в БД до вызова внешнего API."""
     from src.db.connection import get_session
     from src.db.repos import counterparties as cp_repo
@@ -52,6 +102,19 @@ def _prepare_pending_invoice(counterparty: str) -> dict[str, Any] | None:
             return None
 
         run_at = datetime.now()
+        if not ignore_schedule_window and not _is_counterparty_due(cp.invoice_schedule, run_at):
+            logger.info(
+                "Контрагент %s (schedule=%s): вне окна выставления — пропуск",
+                counterparty,
+                cp.invoice_schedule,
+            )
+            return None
+        if ignore_schedule_window:
+            logger.warning(
+                "Контрагент %s: проверка окна выставления отключена флагом --ignore-schedule-window",
+                counterparty,
+            )
+
         strict_period = env_bool("INVOICE_STRICT_PERIOD", False)
         warn_out_of_period = env_bool("INVOICE_WARN_OUT_OF_PERIOD", True)
         date_from, date_to = build_invoice_work_date_window_manual(
@@ -193,13 +256,22 @@ def main() -> None:
     """Ручное выставление счёта."""
     parser = argparse.ArgumentParser(description="Выставить счёт контрагенту")
     parser.add_argument("--counterparty", "-c", required=True, help="Короткое имя контрагента (short_name)")
+    parser.add_argument(
+        "--ignore-schedule-window",
+        action="store_true",
+        help="Игнорировать окно выставления по invoice_schedule",
+    )
     args = parser.parse_args()
 
+    from src.notifications.bitrix_task import create_invoice_task
     from src.notifications.max import send_invoice_notification as send_max_notification
     from src.notifications.telegram import send_invoice_notification_bytes
     from src.sheets.writer import mark_document_in_sheet
     from src.tbank.client import send_invoice
-    prepared = _prepare_pending_invoice(args.counterparty)
+    prepared = _prepare_pending_invoice(
+        args.counterparty,
+        ignore_schedule_window=args.ignore_schedule_window,
+    )
     if not prepared:
         sys.exit(1)
 
@@ -269,6 +341,15 @@ def main() -> None:
             )
         except Exception:
             logger.exception("Ошибка MAX-уведомления по счёту %s", invoice_number)
+        try:
+            create_invoice_task(
+                counterparty_name=counterparty_name,
+                invoice_number=invoice_number,
+                tbank_invoice_id=str(tbank_id) if tbank_id else None,
+                invoice_link=str(invoice_link) if invoice_link else None,
+            )
+        except Exception:
+            logger.exception("Ошибка создания задачи Bitrix24 по счёту %s", invoice_number)
         time.sleep(0.3)  # Ограничение 4 req/sec
         logger.info("Счёт %s успешно выставлен для %s", invoice_number, counterparty_name)
     except Exception:

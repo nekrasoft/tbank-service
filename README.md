@@ -47,6 +47,8 @@ python3 -m src.cli.sync_sheets --from-date 01.03.2026
 
 # Выставить счёт вручную
 python3 -m src.cli.manual --counterparty "Алтай-Строй"
+# Выставить вручную, игнорируя окно invoice_schedule
+python3 -m src.cli.manual --counterparty "Алтай-Строй" --ignore-schedule-window
 
 # Cron (последний день месяца)
 python3 -m src.cli.cron
@@ -73,11 +75,18 @@ BITRIX24_WEBHOOK_URL=https://<portal>.bitrix24.ru/rest/<user_id>/<code>
 
 ## Задачи В Bitrix24 По Факту Выставления Счёта
 
-- Для `python3 -m src.cli.cron` можно включить создание задачи через отдельный webhook:
+- Для `python3 -m src.cli.cron` и `python3 -m src.cli.manual` можно включить создание задачи через отдельный webhook:
 
 ```env
 BITRIX24_TASK_WEBHOOK_URL=https://<portal>.bitrix24.ru/rest/<user_id>/<code>
 ```
+
+- Параметры задачи фиксированы:
+  - Название: `[Киров] Обработать новый счет для контрагента`
+  - Исполнитель: `31746`
+  - Теги: `#киров`, `#новый_счет`
+  - Дедлайн: `+1 сутки` от момента создания
+- Описание задачи совпадает с текстом уведомления в MAX.
 
 - Полезные флаги:
   - `--dry-run` — проверить список без отправки запросов
