@@ -58,6 +58,20 @@ def _parse_amount(object_count: str | None) -> float:
         return 1.0
 
 
+def _parse_amount_decimal(object_count: str | None) -> Decimal:
+    """Парсинг количества в Decimal(2) для расчёта ценовых сегментов."""
+    if not object_count or not str(object_count).strip():
+        return Decimal("1.00")
+    raw = str(object_count).strip().replace(",", ".")
+    try:
+        dec = Decimal(raw)
+    except (InvalidOperation, ValueError):
+        return Decimal("1.00")
+    if dec <= 0:
+        return Decimal("0.01")
+    return dec.quantize(_MONEY_Q, rounding=ROUND_HALF_UP)
+
+
 def _format_amount(amount: float) -> str:
     """Форматирование количества без лишних нулей."""
     rounded_int = int(round(amount))
@@ -130,64 +144,94 @@ def build_invoice_items(
     with open(OPERATIONS_PATH, "r", encoding="utf-8") as f:
         ops_config = json.load(f)
 
-    # Группировка по operation_type:
-    # - fallback_amount: количество, которое нужно считать по прайсу
-    # - revenue_total: сумма выручки из таблицы
-    fallback_amount_by_type: dict[str, float] = defaultdict(float)
-    revenue_total_by_type: dict[str, Decimal] = defaultdict(lambda: Decimal("0.00"))
-    for w in works:
+    price_cache: dict[str, object | None] = {}
+
+    def _get_price_record(op_type: str):
+        if op_type not in price_cache:
+            price_cache[op_type] = prices_repo.get_by_counterparty_and_operation(
+                session,
+                counterparty_id,
+                op_type,
+            )
+        return price_cache[op_type]
+
+    # Сегменты для позиции счёта: разбиваем по operation_type и моментам смены unit price.
+    # Если unit price меняется, начинаем новую позицию (даже при одинаковом display_name).
+    segments_by_type: dict[str, list[dict]] = defaultdict(list)
+    active_segment_by_type: dict[str, dict] = {}
+    op_type_order: list[str] = []
+
+    for w in sorted(works, key=lambda x: (x.date, x.id or 0)):
         op_type = _get_operation_type(w)
         if not op_type or op_type in ("advance", "landfill_unload"):
             continue
+
+        if op_type not in op_type_order:
+            op_type_order.append(op_type)
+
+        amount_dec = _parse_amount_decimal(w.object_count)
         revenue = _parse_revenue(getattr(w, "revenue", None))
         if revenue is not None:
-            revenue_total_by_type[op_type] += revenue
-            continue
-        amount = _parse_amount(w.object_count)
-        fallback_amount_by_type[op_type] += amount
+            unit_price = (revenue / amount_dec).quantize(_MONEY_Q, rounding=ROUND_HALF_UP)
+        else:
+            price_rec = _get_price_record(op_type)
+            if not price_rec:
+                raise ValueError(
+                    f"Не найдена цена для контрагента id={counterparty_id}, тип операции={op_type}"
+                )
+            unit_price = Decimal(str(price_rec.price)).quantize(_MONEY_Q, rounding=ROUND_HALF_UP)
 
-    op_types = list(dict.fromkeys([*fallback_amount_by_type.keys(), *revenue_total_by_type.keys()]))
-    if not op_types:
+        active = active_segment_by_type.get(op_type)
+        if active is None:
+            active_segment_by_type[op_type] = {
+                "unit_price": unit_price,
+                "amount": amount_dec,
+                "start_date": w.date,
+                "end_date": w.date,
+            }
+            continue
+
+        if active["unit_price"] != unit_price:
+            segments_by_type[op_type].append(active)
+            logger.info(
+                "Смена цены для %s: %s -> %s (с %s)",
+                op_type,
+                active["unit_price"],
+                unit_price,
+                w.date.strftime("%d.%m.%Y"),
+            )
+            active_segment_by_type[op_type] = {
+                "unit_price": unit_price,
+                "amount": amount_dec,
+                "start_date": w.date,
+                "end_date": w.date,
+            }
+            continue
+
+        active["amount"] += amount_dec
+        active["end_date"] = w.date
+
+    if not active_segment_by_type:
         return []
 
     items = []
-    for op_type in op_types:
-        fallback_amount = fallback_amount_by_type.get(op_type, 0.0)
-        revenue_total = revenue_total_by_type.get(op_type, Decimal("0.00"))
+    for op_type in op_type_order:
+        active = active_segment_by_type.get(op_type)
+        if active is not None:
+            segments_by_type[op_type].append(active)
 
-        price_rec = prices_repo.get_by_counterparty_and_operation(session, counterparty_id, op_type)
-        if fallback_amount > 0 and not price_rec:
-            raise ValueError(
-                f"Не найдена цена для контрагента id={counterparty_id}, тип операции={op_type}"
-            )
+        display_name = ops_config.get(op_type, {}).get("display_name") or op_type
+        price_rec = _get_price_record(op_type)
+        vat = (price_rec.vat if price_rec else "None") or "None"
 
-        display_name = (
-            ops_config.get(op_type, {}).get("display_name") or op_type
-        )
-
-        if revenue_total > 0:
-            fallback_total = Decimal("0.00")
-            if fallback_amount > 0 and price_rec is not None:
-                fallback_amount_dec = Decimal(str(round(fallback_amount, 2)))
-                fallback_total = (Decimal(price_rec.price) * fallback_amount_dec).quantize(
-                    _MONEY_Q,
-                    rounding=ROUND_HALF_UP,
-                )
-            total_price = (revenue_total + fallback_total).quantize(_MONEY_Q, rounding=ROUND_HALF_UP)
+        for segment in segments_by_type.get(op_type, []):
+            amount = Decimal(segment["amount"]).quantize(_MONEY_Q, rounding=ROUND_HALF_UP)
+            unit_price = Decimal(segment["unit_price"]).quantize(_MONEY_Q, rounding=ROUND_HALF_UP)
             items.append({
                 "name": display_name,
-                "price": float(total_price),
+                "price": float(unit_price),
                 "unit": "ед.",
-                "vat": (price_rec.vat if price_rec else "None") or "None",
-                "amount": 1.0,
+                "vat": vat,
+                "amount": float(amount),
             })
-            continue
-
-        items.append({
-            "name": display_name,
-            "price": float(price_rec.price),
-            "unit": "ед.",
-            "vat": price_rec.vat or "None",
-            "amount": round(fallback_amount, 2),
-        })
     return items
