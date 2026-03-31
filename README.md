@@ -49,6 +49,8 @@ python3 -m src.cli.sync_sheets --from-date 01.03.2026
 python3 -m src.cli.manual --counterparty "Алтай-Строй"
 # Выставить вручную, игнорируя окно invoice_schedule
 python3 -m src.cli.manual --counterparty "Алтай-Строй" --ignore-schedule-window
+# Выставить вручную с нижней границей по дате работ
+python3 -m src.cli.manual --counterparty "Алтай-Строй" --from-date 01.03.2026
 
 # Cron (последний день месяца)
 python3 -m src.cli.cron
@@ -160,6 +162,7 @@ BITRIX24_TASK_WEBHOOK_URL=https://<portal>.bitrix24.ru/rest/<user_id>/<code>
   - `daily` — только текущий день
 - При `INVOICE_WARN_OUT_OF_PERIOD=true` в лог пишется предупреждение, если есть старые невыставленные работы до начала strict-периода.
 - Для `manual` в `strict_period` правая граница берётся концом периода (месяц/полумесяц), а не текущим моментом запуска.
+- Для `manual` можно задать `--from-date DD.MM.YYYY` — это нижняя граница отбора работ в счёт.
 
 ## Структура
 

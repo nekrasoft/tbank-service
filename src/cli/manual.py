@@ -2,6 +2,7 @@
 CLI: ручное выставление счёта для одного контрагента.
 Запуск: python3 -m src.cli.manual --counterparty "Алтай-Строй"
 Или: python3 -m src.cli.manual --counterparty "Алтай-Строй" --ignore-schedule-window
+Или: python3 -m src.cli.manual --counterparty "Алтай-Строй" --from-date 01.03.2026
 --counterparty ожидает короткое имя контрагента (short_name).
 """
 from __future__ import annotations
@@ -37,6 +38,16 @@ MONTHLY_EVENING_START_HOUR = 19
 BIWEEKLY_MIDMONTH_DAY = 15
 BIWEEKLY_MORNING_START_HOUR = 5
 BIWEEKLY_MORNING_END_HOUR = 9
+
+
+def _parse_date_arg(value: str) -> date:
+    """Парсинг даты аргумента CLI в формате DD.MM.YYYY."""
+    try:
+        return datetime.strptime(value.strip(), "%d.%m.%Y").date()
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(
+            f"Неверная дата '{value}', ожидается формат DD.MM.YYYY"
+        ) from e
 
 
 def _is_last_day_of_month(target_date: date) -> bool:
@@ -81,6 +92,7 @@ def _prepare_pending_invoice(
     counterparty: str,
     *,
     ignore_schedule_window: bool = False,
+    from_date: date | None = None,
 ) -> dict[str, Any] | None:
     """Подготовка и фиксация pending-счёта в БД до вызова внешнего API."""
     from src.db.connection import get_session
@@ -122,6 +134,8 @@ def _prepare_pending_invoice(
             run_at=run_at,
             strict_period=strict_period,
         )
+        if from_date is not None:
+            date_from = max(date_from, from_date) if date_from is not None else from_date
         if strict_period and warn_out_of_period and date_from is not None:
             old_count = works_repo.count_uninvoiced_before_date(
                 session,
@@ -263,6 +277,12 @@ def main() -> None:
         action="store_true",
         help="Игнорировать окно выставления по invoice_schedule",
     )
+    parser.add_argument(
+        "--from-date",
+        type=_parse_date_arg,
+        default=None,
+        help="Учитывать работы начиная с даты DD.MM.YYYY (нижняя граница отбора)",
+    )
     args = parser.parse_args()
 
     from src.notifications.bitrix_task import create_invoice_task
@@ -273,6 +293,7 @@ def main() -> None:
     prepared = _prepare_pending_invoice(
         args.counterparty,
         ignore_schedule_window=args.ignore_schedule_window,
+        from_date=args.from_date,
     )
     if not prepared:
         sys.exit(1)
