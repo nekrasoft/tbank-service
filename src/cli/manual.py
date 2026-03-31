@@ -351,9 +351,7 @@ def main() -> None:
         try:
             send_max_notification(
                 counterparty_name=counterparty_name,
-                counterparty_short_name=prepared["counterparty_short_name"],
                 invoice_number=invoice_number,
-                invoice_items=prepared["items"],
                 bitrix_task_url=bitrix_task_url,
             )
         except Exception:

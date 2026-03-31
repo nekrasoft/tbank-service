@@ -7,7 +7,6 @@ import asyncio
 import inspect
 import logging
 import os
-from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 from maxapi.enums.parse_mode import ParseMode
 
@@ -37,29 +36,14 @@ def _get_accountants_chat_id() -> int:
 def build_invoice_notification_text(
     *,
     counterparty_name: str,
-    counterparty_short_name: str | None = None,
     invoice_number: str,
-    tbank_invoice_id: str | None = None,
-    invoice_link: str | None = None,
-    invoice_items: list[dict[str, Any]] | None = None,
     bitrix_task_url: str | None = None,
 ) -> str:
     """Единый текст уведомления о выставленном счёте."""
-    short_name = (counterparty_short_name or "").strip()
-    header = (
-        f"💰 **Выставлен счет** №{invoice_number} ({short_name})"
-        if short_name
-        else f"💰 **Выставлен счет** №{invoice_number}"
-    )
-
     lines = [
-        header,
+        f"💰 **Выставлен счет №{invoice_number}**",
         f"Контрагент: {counterparty_name}",
     ]
-
-    invoice_amount = _calculate_invoice_amount(invoice_items)
-    if invoice_amount is not None:
-        lines.append(f"Сумма счёта: {_format_money(invoice_amount)}")
 
     if bitrix_task_url:
         lines.append(f"Задача в Битриксе: {bitrix_task_url}")
@@ -72,40 +56,10 @@ def build_invoice_notification_text(
     return "\n".join(lines)
 
 
-def _calculate_invoice_amount(invoice_items: list[dict[str, Any]] | None) -> Decimal | None:
-    """Считает итог по позициям счёта: sum(price * amount)."""
-    if not invoice_items:
-        return None
-
-    total = Decimal("0")
-    has_any = False
-    for item in invoice_items:
-        try:
-            price = Decimal(str(item.get("price")))
-            amount = Decimal(str(item.get("amount")))
-        except Exception:
-            continue
-        total += price * amount
-        has_any = True
-
-    if not has_any:
-        return None
-    return total.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-
-
-def _format_money(value: Decimal) -> str:
-    """Форматирует сумму в человекочитаемом виде для текста."""
-    return f"{value:.2f} ₽"
-
-
 def send_invoice_notification(
     *,
     counterparty_name: str,
-    counterparty_short_name: str | None = None,
     invoice_number: str,
-    tbank_invoice_id: str | None = None,
-    invoice_link: str | None = None,
-    invoice_items: list[dict[str, Any]] | None = None,
     bitrix_task_url: str | None = None,
 ) -> bool:
     """
@@ -113,8 +67,6 @@ def send_invoice_notification(
 
     :param counterparty_name: Наименование контрагента
     :param invoice_number: Номер счёта
-    :param tbank_invoice_id: ID счёта в T-Bank
-    :param invoice_link: Ссылка на оплату (если есть)
     :param bitrix_task_url: Ссылка на задачу в Bitrix24 (если есть)
     :return: True при успехе
     """
@@ -132,11 +84,7 @@ def send_invoice_notification(
 
     text = build_invoice_notification_text(
         counterparty_name=counterparty_name,
-        counterparty_short_name=counterparty_short_name,
         invoice_number=invoice_number,
-        tbank_invoice_id=tbank_invoice_id,
-        invoice_link=invoice_link,
-        invoice_items=invoice_items,
         bitrix_task_url=bitrix_task_url,
     )
 
