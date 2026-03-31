@@ -60,8 +60,10 @@ def _is_counterparty_due(invoice_schedule: str | None, run_at: datetime) -> bool
         return _is_last_day_of_month(run_at.date()) and run_at.hour >= RUN_AT_EVENING_START_HOUR
 
     if schedule == "2weeks":
-        return run_at.hour >= RUN_AT_EVENING_START_HOUR
+        return (
+            run_at.hour >= RUN_AT_EVENING_START_HOUR
             and (_is_last_day_of_month(run_at.date()) or run_at.day == BIWEEKLY_MIDMONTH_DAY)
+        )
 
     logger.warning(
         "Неизвестный invoice_schedule='%s', используем monthly-правило",
@@ -347,9 +349,9 @@ def main() -> None:
             try:
                 send_max_notification(
                     counterparty_name=prepared["counterparty_name"],
+                    counterparty_short_name=prepared["counterparty_short_name"],
                     invoice_number=invoice_number,
-                    tbank_invoice_id=str(tbank_id) if tbank_id else None,
-                    invoice_link=str(invoice_link) if invoice_link else None,
+                    invoice_items=prepared["items"],
                     bitrix_task_url=bitrix_task_url,
                 )
             except Exception:
