@@ -46,7 +46,7 @@ def build_invoice_notification_text(
     ]
 
     if bitrix_task_url:
-        lines.append(f"Задача в Битриксе: {bitrix_task_url}")
+        lines.append(f"Задача в Битриксе: [ссылка]({bitrix_task_url})")
     lines.extend(
         [
             "",
