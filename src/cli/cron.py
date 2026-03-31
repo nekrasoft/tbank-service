@@ -33,11 +33,8 @@ TBANK_DELAY_SEC = 0.3
 DEBUG_FORCE_EMAIL = (os.environ.get("DEBUG_FORCE_EMAIL") or "").strip() or None
 
 # Окна выставления для периодичности.
-MONTHLY_EVENING_START_HOUR = 19
+RUN_AT_EVENING_START_HOUR = 19
 BIWEEKLY_MIDMONTH_DAY = 15
-BIWEEKLY_MORNING_START_HOUR = 5
-BIWEEKLY_MORNING_END_HOUR = 9
-
 
 def _is_last_day_of_month(target_date: date) -> bool:
     """Проверка: переданная дата — последний день месяца."""
@@ -50,31 +47,27 @@ def _is_counterparty_due(invoice_schedule: str | None, run_at: datetime) -> bool
     Проверка, должен ли контрагент выставляться в текущий запуск.
 
     Поддерживаемые значения:
-    - monthly: последний день месяца, после 21:00
-    - 2weeks: последний день месяца или 15 число утром (08:00-11:59)
-    - daily: в любой запуск
+    - monthly: последний день месяца, после 22:00
+    - 2weeks: последний день месяца или 15 число, после 22:00
+    - daily: в любой день после 22:00
     """
     schedule = (invoice_schedule or "monthly").strip().lower()
 
     if schedule == "daily":
-        return True
+        return run_at.hour >= RUN_AT_EVENING_START_HOUR
 
     if schedule == "monthly":
-        return _is_last_day_of_month(run_at.date()) and run_at.hour >= MONTHLY_EVENING_START_HOUR
+        return _is_last_day_of_month(run_at.date()) and run_at.hour >= RUN_AT_EVENING_START_HOUR
 
     if schedule == "2weeks":
-        if _is_last_day_of_month(run_at.date()):
-            return True
-        return (
-            run_at.day == BIWEEKLY_MIDMONTH_DAY
-            and BIWEEKLY_MORNING_START_HOUR <= run_at.hour < BIWEEKLY_MORNING_END_HOUR
-        )
+        return run_at.hour >= RUN_AT_EVENING_START_HOUR
+            and (_is_last_day_of_month(run_at.date()) or run_at.day == BIWEEKLY_MIDMONTH_DAY)
 
     logger.warning(
         "Неизвестный invoice_schedule='%s', используем monthly-правило",
         invoice_schedule,
     )
-    return _is_last_day_of_month(run_at.date()) and run_at.hour >= MONTHLY_EVENING_START_HOUR
+    return _is_last_day_of_month(run_at.date()) and run_at.hour >= RUN_AT_EVENING_START_HOUR
 
 
 def _get_uninvoiced_counterparties() -> list[str]:
