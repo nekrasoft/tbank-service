@@ -190,6 +190,7 @@ def _prepare_pending_invoice(counterparty_name: str, run_at: datetime) -> dict[s
             "invoice_id": inv.id,
             "invoice_number": inv_num,
             "counterparty_name": cp.name,
+            "counterparty_short_name": cp.short_name,
             "bitrix_company_id": cp.bitrix_company_id,
             "payer_name": cp.name,
             "payer_inn": cp.inn,
@@ -340,6 +341,7 @@ def main() -> None:
             try:
                 bitrix_task_url = create_invoice_task(
                     counterparty_name=prepared["counterparty_name"],
+                    counterparty_short_name=prepared["counterparty_short_name"],
                     invoice_number=invoice_number,
                     bitrix_company_id=prepared["bitrix_company_id"],
                     tbank_invoice_id=str(tbank_id) if tbank_id else None,

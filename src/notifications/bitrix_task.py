@@ -39,6 +39,7 @@ def _is_task_webhook_configured() -> bool:
 def create_invoice_task(
     *,
     counterparty_name: str,
+    counterparty_short_name: str | None = None,
     invoice_number: str,
     bitrix_company_id: int | None = None,
     tbank_invoice_id: str | None = None,
@@ -59,7 +60,10 @@ def create_invoice_task(
         pdf_url=pdf_url,
     )
     deadline = datetime.now().astimezone() + timedelta(days=1)
-    task_title = f"{_TASK_TITLE_PREFIX}{invoice_number}"
+    task_title = _build_task_title(
+        invoice_number=invoice_number,
+        counterparty_short_name=counterparty_short_name,
+    )
     crm_binding = _build_company_binding(bitrix_company_id)
 
     try:
@@ -175,3 +179,11 @@ def _build_company_binding(bitrix_company_id: int | None) -> str | None:
     if company_id <= 0:
         return None
     return f"CO_{company_id}"
+
+
+def _build_task_title(*, invoice_number: str, counterparty_short_name: str | None = None) -> str:
+    """Формирует заголовок задачи со short_name контрагента, если он задан."""
+    short_name = (counterparty_short_name or "").strip()
+    if short_name:
+        return f"{_TASK_TITLE_PREFIX}{invoice_number} ({short_name})"
+    return f"{_TASK_TITLE_PREFIX}{invoice_number}"
