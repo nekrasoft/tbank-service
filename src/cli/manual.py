@@ -3,6 +3,7 @@ CLI: ручное выставление счёта для одного конт
 Запуск: python3 -m src.cli.manual --counterparty "Алтай-Строй"
 Или: python3 -m src.cli.manual --counterparty "Алтай-Строй" --ignore-schedule-window
 Или: python3 -m src.cli.manual --counterparty "Алтай-Строй" --from-date 01.03.2026
+Или: python3 -m src.cli.manual --counterparty "Алтай-Строй" --dry-run
 --counterparty ожидает короткое имя контрагента (short_name).
 """
 from __future__ import annotations
@@ -14,6 +15,7 @@ import os
 import sys
 import time
 from datetime import date, datetime, timedelta
+from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 from typing import Any
 
@@ -48,6 +50,68 @@ def _parse_date_arg(value: str) -> date:
         raise argparse.ArgumentTypeError(
             f"Неверная дата '{value}', ожидается формат DD.MM.YYYY"
         ) from e
+
+
+def _format_money(value: Decimal) -> str:
+    """Форматирование суммы в виде 2 знаков после запятой."""
+    return f"{value.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP):.2f}"
+
+
+def _calculate_items_total(items: list[dict[str, Any]]) -> Decimal:
+    """Итог по позициям счёта: sum(price * amount)."""
+    total = Decimal("0.00")
+    for item in items:
+        try:
+            price = Decimal(str(item.get("price")))
+            amount = Decimal(str(item.get("amount")))
+        except Exception:
+            continue
+        total += price * amount
+    return total.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def _format_date_range(date_from: date | None, date_to: date | None) -> str:
+    """Человеко-читаемое представление диапазона дат."""
+    if date_from and date_to:
+        return f"{date_from.strftime('%d.%m.%Y')} - {date_to.strftime('%d.%m.%Y')}"
+    if date_from:
+        return f"с {date_from.strftime('%d.%m.%Y')}"
+    if date_to:
+        return f"до {date_to.strftime('%d.%m.%Y')}"
+    return "без ограничений"
+
+
+def _log_dry_run_preview(prepared: dict[str, Any]) -> None:
+    """Логирование превью счёта в dry-run режиме."""
+    items = prepared.get("items") or []
+    logger.info(
+        "DRY-RUN: контрагент=%s, период=%s, работ=%s, позиций=%s",
+        prepared.get("counterparty_name"),
+        _format_date_range(prepared.get("date_from"), prepared.get("date_to")),
+        prepared.get("works_count", 0),
+        len(items),
+    )
+    for idx, item in enumerate(items, start=1):
+        try:
+            price = Decimal(str(item.get("price"))).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            amount = Decimal(str(item.get("amount")))
+        except Exception:
+            logger.info("DRY-RUN: [%s] %s (некорректные price/amount)", idx, item.get("name", ""))
+            continue
+        line_total = (price * amount).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        logger.info(
+            "DRY-RUN: [%s] %s | amount=%s %s | price=%s | total=%s",
+            idx,
+            item.get("name", ""),
+            item.get("amount"),
+            item.get("unit", "ед."),
+            _format_money(price),
+            _format_money(line_total),
+        )
+    logger.info("DRY-RUN: итоговая сумма счёта=%s", _format_money(_calculate_items_total(items)))
+    if prepared.get("comment"):
+        logger.info("DRY-RUN: комментарий к счёту:\n%s", prepared["comment"])
+    logger.info("DRY-RUN: изменения в БД и внешние вызовы не выполнялись")
 
 
 def _is_last_day_of_month(target_date: date) -> bool:
@@ -93,6 +157,7 @@ def _prepare_pending_invoice(
     *,
     ignore_schedule_window: bool = False,
     from_date: date | None = None,
+    dry_run: bool = False,
 ) -> dict[str, Any] | None:
     """Подготовка и фиксация pending-счёта в БД до вызова внешнего API."""
     from src.db.connection import get_session
@@ -150,12 +215,20 @@ def _prepare_pending_invoice(
                     date_from.strftime("%d.%m.%Y"),
                 )
 
-        works = works_repo.get_uninvoiced_by_counterparty_for_update(
-            session,
-            counterparty,
-            date_from=date_from,
-            date_to=date_to,
-        )
+        if dry_run:
+            works = works_repo.get_uninvoiced_by_counterparty(
+                session,
+                counterparty,
+                date_from=date_from,
+                date_to=date_to,
+            )
+        else:
+            works = works_repo.get_uninvoiced_by_counterparty_for_update(
+                session,
+                counterparty,
+                date_from=date_from,
+                date_to=date_to,
+            )
         if not works:
             logger.error("Нет невыставленных работ для контрагента %s", counterparty)
             return None
@@ -165,6 +238,17 @@ def _prepare_pending_invoice(
             logger.error("Не удалось сформировать позиции счёта (нет цен?)")
             return None
         comment = build_invoice_comment(works)
+
+        if dry_run:
+            return {
+                "counterparty_name": cp.name,
+                "counterparty_short_name": cp.short_name,
+                "items": items,
+                "comment": comment,
+                "works_count": len(works),
+                "date_from": date_from,
+                "date_to": date_to,
+            }
 
         today = date.today()
         due_date = today + timedelta(days=14)
@@ -283,20 +367,30 @@ def main() -> None:
         default=None,
         help="Учитывать работы начиная с даты DD.MM.YYYY (нижняя граница отбора)",
     )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Собрать и показать превью счёта без записи в БД и отправки в T-Bank",
+    )
     args = parser.parse_args()
+
+    prepared = _prepare_pending_invoice(
+        args.counterparty,
+        ignore_schedule_window=args.ignore_schedule_window,
+        from_date=args.from_date,
+        dry_run=args.dry_run,
+    )
+    if not prepared:
+        sys.exit(1)
+    if args.dry_run:
+        _log_dry_run_preview(prepared)
+        return
 
     from src.notifications.bitrix_task import create_invoice_task
     from src.notifications.max import send_invoice_notification as send_max_notification
     from src.notifications.telegram import send_invoice_notification_bytes
     from src.sheets.writer import mark_document_in_sheet
     from src.tbank.client import send_invoice
-    prepared = _prepare_pending_invoice(
-        args.counterparty,
-        ignore_schedule_window=args.ignore_schedule_window,
-        from_date=args.from_date,
-    )
-    if not prepared:
-        sys.exit(1)
 
     invoice_id = prepared["invoice_id"]
     invoice_number = prepared["invoice_number"]
