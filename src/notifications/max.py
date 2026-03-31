@@ -47,9 +47,9 @@ def build_invoice_notification_text(
     """Единый текст уведомления о выставленном счёте."""
     short_name = (counterparty_short_name or "").strip()
     header = (
-        f"Выставлен счет №{invoice_number} ({short_name})"
+        f"💰 **Выставлен счет** №{invoice_number} ({short_name})"
         if short_name
-        else f"Выставлен счет №{invoice_number}"
+        else f"💰 **Выставлен счет** №{invoice_number}"
     )
 
     lines = [
