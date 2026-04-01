@@ -7,6 +7,7 @@ import asyncio
 import inspect
 import logging
 import os
+import re
 from typing import Any
 from maxapi.enums.parse_mode import ParseMode
 
@@ -46,7 +47,9 @@ def build_invoice_notification_text(
     ]
 
     if bitrix_task_url:
-        lines.append(f"Задача в Битриксе: [ссылка]({bitrix_task_url})")
+        task_id = _extract_bitrix_task_id(bitrix_task_url)
+        task_link_text = f"#{task_id}" if task_id else "ссылка"
+        lines.append(f"Задача в Битриксе: [{task_link_text}]({bitrix_task_url})")
     lines.extend(
         [
             "",
@@ -54,6 +57,14 @@ def build_invoice_notification_text(
         ]
     )
     return "\n".join(lines)
+
+
+def _extract_bitrix_task_id(task_url: str) -> str | None:
+    """Извлекает task id из ссылки вида .../tasks/task/view/<ID>[/]."""
+    match = re.search(r"/tasks/task/view/(\d+)(?:/|$)", task_url)
+    if not match:
+        return None
+    return match.group(1)
 
 
 def send_invoice_notification(
