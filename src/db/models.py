@@ -99,7 +99,7 @@ class Invoice(Base):
     __tablename__ = "invoices"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    invoice_number = Column(String(20), nullable=False, unique=True)
+    invoice_number = Column(String(20), nullable=False)
     tbank_invoice_id = Column(String(100), nullable=True)
     counterparty_id = Column(Integer, ForeignKey("counterparties.id", ondelete="RESTRICT"), nullable=False)
     issued_at = Column(DateTime, nullable=False)
@@ -130,5 +130,5 @@ class InvoiceNumberSeq(Base):
     __tablename__ = "invoice_number_seq"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    year_month = Column(String(7), nullable=False, unique=True, comment="YYYY-MM")
+    year_month = Column(String(7), nullable=False, unique=True, comment="YYYY (legacy: YYYY-MM)")
     last_number = Column(Integer, nullable=False, default=0)
