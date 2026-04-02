@@ -23,6 +23,7 @@ OPERATIONS_PATH = PROJECT_ROOT / "config" / "operations.json"
 # Маппинг (структура, операция) -> operation_type
 _OPERATION_TYPE_MAP: dict[tuple[str, str], str] = {}
 _MONEY_Q = Decimal("0.01")
+_BUNKER_VOLUME_M3 = 8.0
 
 
 def _load_operation_type_map() -> dict[tuple[str, str], str]:
@@ -109,9 +110,12 @@ def build_invoice_comment(works: list[Work]) -> str:
     05.03.2026 Свободы 111А - 3 шт, 10.03.2026 Знак - 4 шт
     """
     grouped: dict[tuple[date_type, str], float] = defaultdict(float)
+    total_volume = 0.0
     for work in works:
+        amount = _parse_amount(work.object_count)
         note = (work.note or "").strip()
-        grouped[(work.date, note)] += _parse_amount(work.object_count)
+        grouped[(work.date, note)] += amount
+        total_volume += amount * _BUNKER_VOLUME_M3
 
     if not grouped:
         return "Оказаны услуги."
@@ -125,7 +129,8 @@ def build_invoice_comment(works: list[Work]) -> str:
         else:
             parts.append(f"{date_str} - {amount_str} шт")
 
-    return "Оказаны услуги:\n" + ", ".join(parts)
+    total_volume_str = _format_amount(total_volume)
+    return "Оказаны услуги:\n" + ", ".join(parts) + f"\nОбщий объем: {total_volume_str} м3"
 
 
 def build_invoice_items(
