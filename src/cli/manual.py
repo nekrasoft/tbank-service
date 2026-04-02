@@ -104,7 +104,7 @@ def _log_dry_run_preview(prepared: dict[str, Any]) -> None:
             idx,
             item.get("name", ""),
             item.get("amount"),
-            item.get("unit", "ед."),
+            item.get("unit", "шт"),
             _format_money(price),
             _format_money(line_total),
         )
@@ -268,7 +268,7 @@ def _prepare_pending_invoice(
                 name=item["name"],
                 price=item["price"],
                 amount=item["amount"],
-                unit=item.get("unit", "ед."),
+                unit=item.get("unit", "шт"),
                 vat=item.get("vat", "None"),
             )
         claimed = works_repo.update_invoice_id(session, [w.id for w in works], inv.id)

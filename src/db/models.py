@@ -121,7 +121,7 @@ class InvoiceItem(Base):
     name = Column(String(1000), nullable=False)
     price = Column(Numeric(12, 2), nullable=False)
     amount = Column(Numeric(12, 2), nullable=False)
-    unit = Column(String(50), nullable=False, default="ед.")
+    unit = Column(String(50), nullable=False, default="шт")
     vat = Column(String(10), nullable=True, default="None")
 
 

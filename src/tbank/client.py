@@ -128,7 +128,7 @@ def send_invoice(
             {
                 "name": str(item["name"])[:1000],
                 "price": float(item["price"]),
-                "unit": str(item.get("unit", "ед."))[:50],
+                "unit": str(item.get("unit", "шт"))[:50],
                 "vat": str(item.get("vat", "None")),
                 "amount": float(item["amount"]),
             }

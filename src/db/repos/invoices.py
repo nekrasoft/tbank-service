@@ -42,7 +42,7 @@ def add_item(
     name: str,
     price: float,
     amount: float,
-    unit: str = "ед.",
+    unit: str = "шт",
     vat: str = "None",
 ) -> InvoiceItem:
     """Добавление позиции к счёту."""

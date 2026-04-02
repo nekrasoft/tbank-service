@@ -106,7 +106,7 @@ def build_invoice_comment(works: list[Work]) -> str:
 
     Формат:
     Оказаны услуги:
-    05.03.2026 Свободы 111А - 3 ед., 10.03.2026 Знак - 4 ед.
+    05.03.2026 Свободы 111А - 3 шт, 10.03.2026 Знак - 4 шт
     """
     grouped: dict[tuple[date_type, str], float] = defaultdict(float)
     for work in works:
@@ -121,9 +121,9 @@ def build_invoice_comment(works: list[Work]) -> str:
         date_str = work_date.strftime("%d.%m.%Y")
         amount_str = _format_amount(total)
         if note:
-            parts.append(f"{date_str} {note} - {amount_str} ед.")
+            parts.append(f"{date_str} {note} - {amount_str} шт")
         else:
-            parts.append(f"{date_str} - {amount_str} ед.")
+            parts.append(f"{date_str} - {amount_str} шт")
 
     return "Оказаны услуги:\n" + ", ".join(parts)
 
@@ -230,7 +230,7 @@ def build_invoice_items(
             items.append({
                 "name": display_name,
                 "price": float(unit_price),
-                "unit": "ед.",
+                "unit": "шт",
                 "vat": vat,
                 "amount": float(amount),
             })

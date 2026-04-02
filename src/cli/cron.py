@@ -165,7 +165,7 @@ def _prepare_pending_invoice(counterparty_name: str, run_at: datetime) -> dict[s
                 name=item["name"],
                 price=item["price"],
                 amount=item["amount"],
-                unit=item.get("unit", "ед."),
+                unit=item.get("unit", "шт"),
                 vat=item.get("vat", "None"),
             )
 
