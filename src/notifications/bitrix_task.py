@@ -15,7 +15,7 @@ from src.bitrix.client import add_task
 logger = logging.getLogger(__name__)
 
 _TASK_WEBHOOK_ENV = "BITRIX24_TASK_WEBHOOK_URL"
-_TASK_TITLE_PREFIX = "[Киров] Обработать новый счет №"
+_TASK_TITLE_PREFIX = "[Киров] Обработать счет №"
 _TASK_RESPONSIBLE_ID = 31648
 _TASK_AUDITORS = [8, 54, 18, 33036]
 _TASK_TAGS = ["киров", "новый_счет", "отправить в ЭДО"]
