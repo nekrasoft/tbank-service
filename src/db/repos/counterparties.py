@@ -62,6 +62,8 @@ def create(
     phone: str = "",
     note: str = "",
     invoice_schedule: str = "2weeks",
+    status: str = "active",
+    operation_type: str | None = None,
 ) -> Counterparty:
     """Создание контрагента."""
     cp = Counterparty(
@@ -73,6 +75,8 @@ def create(
         phone=phone or "",
         note=note or "",
         invoice_schedule=(invoice_schedule or "2weeks").strip(),
+        status=(status or "active").strip(),
+        operation_type=(operation_type or "").strip() or None,
     )
     session.add(cp)
     session.flush()

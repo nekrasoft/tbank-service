@@ -42,6 +42,18 @@ class Counterparty(Base):
         default="2weeks",
         comment="Периодичность выставления: monthly, 2weeks, daily",
     )
+    status = Column(
+        String(20),
+        nullable=False,
+        default="active",
+        comment="Статус контрагента: active, inactive",
+    )
+    operation_type = Column(
+        String(50),
+        nullable=True,
+        default=None,
+        comment="Тип операции по умолчанию: trip_removal, container_pickup",
+    )
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
