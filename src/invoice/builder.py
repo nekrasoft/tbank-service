@@ -252,5 +252,6 @@ def build_invoice_items(
                 "unit": "шт",
                 "vat": vat,
                 "amount": float(amount),
+                "operation_type": op_type,
             })
     return items

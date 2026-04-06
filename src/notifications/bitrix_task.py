@@ -26,7 +26,11 @@ _DEAL_STAGE_ID = "C102:FINAL_INVOICE"
 _DEAL_TYPE_ID = "SALE"
 _DEAL_SOURCE_ID = "PARTNER"
 _DEAL_SERVICE_FIELD = "UF_CRM_1640764372166"
-_DEAL_SERVICE_VALUE = 2558
+_DEAL_SERVICE_DEFAULT_VALUE = 2558
+_DEAL_SERVICE_VALUE_BY_OPERATION_TYPE = {
+    "container_pickup": 2558,
+    "trip_removal": 2550,
+}
 _DEAL_SUBJECT_FIELD = "UF_CRM_1640765412209"
 _DEAL_SUBJECT_VALUE = 174
 _DEAL_PAYMENT_FIELD = "UF_CRM_AMO_586713"
@@ -36,7 +40,7 @@ _DEAL_CITY_VALUE = "Киров"
 _DEAL_DIRECTION_FIELD = "UF_CRM_1680515310897"
 _DEAL_DIRECTION_VALUE = 4818
 _DEAL_ADDRESS = "Киров"
-_DEAL_PRODUCT_NAME = "Услуга по вывозу мусора из контейнера 8м3"
+_DEAL_DEFAULT_PRODUCT_NAME = "Услуга по вывозу мусора из контейнера 8 м3"
 _task_webhook_missing_logged = False
 _deal_webhook_missing_logged = False
 
@@ -233,6 +237,7 @@ def _create_invoice_deal(
         return None
 
     deal_amount = invoice_amount or Decimal("0.00")
+    deal_service_value = _resolve_deal_service_value(invoice_items)
     deal_id = add_deal(
         title=_build_deal_title(invoice_date),
         company_id=company_id,
@@ -242,7 +247,7 @@ def _create_invoice_deal(
         source_id=_DEAL_SOURCE_ID,
         address=_DEAL_ADDRESS,
         custom_fields={
-            _DEAL_SERVICE_FIELD: _DEAL_SERVICE_VALUE,
+            _DEAL_SERVICE_FIELD: deal_service_value,
             _DEAL_SUBJECT_FIELD: _DEAL_SUBJECT_VALUE,
             _DEAL_PAYMENT_FIELD: _DEAL_PAYMENT_VALUE,
             _DEAL_CITY_FIELD: _DEAL_CITY_VALUE,
@@ -267,11 +272,12 @@ def _create_invoice_deal(
             )
 
     logger.info(
-        "Bitrix24 deal: создана сделка id=%s по счёту %s (company_id=%s, amount=%s)",
+        "Bitrix24 deal: создана сделка id=%s по счёту %s (company_id=%s, amount=%s, service_value=%s)",
         deal_id,
         invoice_number,
         company_id,
         _format_amount_decimal(deal_amount),
+        deal_service_value,
     )
     return deal_id
 
@@ -295,11 +301,11 @@ def _build_deal_product_rows(
     """
     Формирует товарные строки сделки из счёта.
 
-    Название товара фиксированное по требованиям CRM, а количество/цена/сумма
-    берутся из позиций счёта.
+    Название/количество/цена/сумма берутся из позиций счёта.
     """
     rows: list[dict[str, Any]] = []
     for item in invoice_items or []:
+        product_name = str(item.get("name") or "").strip() or _DEAL_DEFAULT_PRODUCT_NAME
         price = _try_decimal(item.get("price"))
         quantity = _try_decimal(item.get("amount"))
         if price is None or quantity is None or quantity <= 0:
@@ -307,7 +313,7 @@ def _build_deal_product_rows(
         line_sum = (price * quantity).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
         rows.append(
             {
-                "PRODUCT_NAME": _DEAL_PRODUCT_NAME,
+                "PRODUCT_NAME": product_name,
                 "PRICE": _format_amount_decimal(price),
                 "QUANTITY": _format_quantity_decimal(quantity),
                 "SUM": _format_amount_decimal(line_sum),
@@ -320,12 +326,66 @@ def _build_deal_product_rows(
         return []
     return [
         {
-            "PRODUCT_NAME": _DEAL_PRODUCT_NAME,
+            "PRODUCT_NAME": _DEAL_DEFAULT_PRODUCT_NAME,
             "PRICE": _format_amount_decimal(fallback_amount),
             "QUANTITY": "1",
             "SUM": _format_amount_decimal(fallback_amount),
         }
     ]
+
+
+def _normalize_operation_type(operation_type: str | None) -> str:
+    """Нормализует operation_type для сопоставления с маппингом."""
+    return str(operation_type or "").strip().lower()
+
+
+def _resolve_deal_service_value(invoice_items: list[dict[str, Any]] | None) -> int:
+    """
+    Определяет значение UF_CRM_1640764372166 по составу позиций счёта.
+
+    Если в счёте несколько разных типов услуг с разными маппингами,
+    используется значение первой распознанной позиции.
+    """
+    matched_values: list[tuple[str, int]] = []
+    unknown_operation_types: list[str] = []
+    missing_operation_type_count = 0
+
+    for item in invoice_items or []:
+        operation_type = _normalize_operation_type(item.get("operation_type"))
+        if not operation_type:
+            missing_operation_type_count += 1
+            continue
+
+        mapped_by_op_type = _DEAL_SERVICE_VALUE_BY_OPERATION_TYPE.get(operation_type)
+        if mapped_by_op_type is None:
+            unknown_operation_types.append(operation_type)
+            continue
+        matched_values.append((f"operation_type:{operation_type}", mapped_by_op_type))
+
+    if not matched_values:
+        if missing_operation_type_count > 0:
+            logger.warning(
+                "Bitrix24 deal: %s позиций без operation_type, используем default=%s",
+                missing_operation_type_count,
+                _DEAL_SERVICE_DEFAULT_VALUE,
+            )
+        if unknown_operation_types:
+            logger.warning(
+                "Bitrix24 deal: не найден маппинг услуги для operation_type=%s, используем default=%s",
+                ", ".join(sorted(set(unknown_operation_types))),
+                _DEAL_SERVICE_DEFAULT_VALUE,
+            )
+        return _DEAL_SERVICE_DEFAULT_VALUE
+
+    first_value = matched_values[0][1]
+    unique_values = {value for _, value in matched_values}
+    if len(unique_values) > 1:
+        logger.warning(
+            "Bitrix24 deal: в счёте несколько типов услуг (%s), используем значение первой позиции=%s",
+            ", ".join(f"{name} -> {value}" for name, value in matched_values),
+            first_value,
+        )
+    return first_value
 
 
 def _try_decimal(value: Any) -> Decimal | None:
