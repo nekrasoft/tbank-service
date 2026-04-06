@@ -385,6 +385,7 @@ def add_deal(
     """Создаёт сделку в Bitrix24 CRM методом crm.deal.add."""
     fields: dict[str, Any] = {
         "TITLE": str(title).strip()[:255],
+        "ASSIGNED_BY_ID": 33036,
     }
 
     if company_id is not None:
