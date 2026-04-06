@@ -426,6 +426,7 @@ def main() -> None:
                 invoice_date=prepared["invoice_date"],
                 bitrix_company_id=prepared["bitrix_company_id"],
                 invoice_items=prepared["items"],
+                log_deal_request_payload=True,
             )
             if bitrix_task_url:
                 logger.info("DRY-RUN Bitrix-only: задача создана, url=%s", bitrix_task_url)

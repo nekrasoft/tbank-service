@@ -76,6 +76,7 @@ def create_invoice_task(
     invoice_link: str | None = None,
     pdf_url: str | None = None,
     invoice_items: list[dict[str, Any]] | None = None,
+    log_deal_request_payload: bool = False,
 ) -> str | None:
     """Создаёт задачу в Bitrix24 по факту выставления счёта."""
     if not _is_task_webhook_configured():
@@ -104,6 +105,7 @@ def create_invoice_task(
                 bitrix_company_id=bitrix_company_id,
                 invoice_amount=invoice_amount,
                 invoice_items=invoice_items,
+                log_request_payload=log_deal_request_payload,
             )
         except Exception as e:
             logger.error("Bitrix24 deal: ошибка создания сделки по счёту %s — %s", invoice_number, e)
@@ -219,6 +221,7 @@ def _create_invoice_deal(
     bitrix_company_id: int | None,
     invoice_amount: Decimal | None,
     invoice_items: list[dict[str, Any]] | None,
+    log_request_payload: bool = False,
 ) -> int | None:
     """Создаёт сделку и товарные позиции по счёту."""
     company_id = _normalize_positive_int(bitrix_company_id)
@@ -246,6 +249,7 @@ def _create_invoice_deal(
             _DEAL_DIRECTION_FIELD: _DEAL_DIRECTION_VALUE,
         },
         webhook_env_var=_DEAL_WEBHOOK_ENV,
+        log_request_payload=log_request_payload,
     )
     product_rows = _build_deal_product_rows(invoice_items, fallback_amount=deal_amount)
     if product_rows:
@@ -253,6 +257,7 @@ def _create_invoice_deal(
             deal_id=deal_id,
             rows=product_rows,
             webhook_env_var=_DEAL_WEBHOOK_ENV,
+            log_request_payload=log_request_payload,
         )
         if not set_ok:
             logger.warning(

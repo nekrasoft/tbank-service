@@ -1,6 +1,7 @@
 """Клиент Bitrix24 CRM (входящий вебхук)."""
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -79,6 +80,15 @@ def _call_method(
         description = data.get("error_description")
         raise RuntimeError(f"Bitrix24 API error: {error} ({description})")
     return data
+
+
+def _log_method_payload(method_name: str, payload: dict[str, Any]) -> None:
+    """Логирует payload REST-запроса Bitrix24 в безопасном виде."""
+    try:
+        payload_text = json.dumps(payload, ensure_ascii=False, default=str)
+    except Exception:
+        payload_text = str(payload)
+    logger.info("Bitrix24 request payload %s: %s", method_name, payload_text)
 
 
 def _call_list_method(
@@ -370,6 +380,7 @@ def add_deal(
     address: str | None = None,
     custom_fields: dict[str, Any] | None = None,
     webhook_env_var: str = "BITRIX24_DEAL_WEBHOOK_URL",
+    log_request_payload: bool = False,
 ) -> int:
     """Создаёт сделку в Bitrix24 CRM методом crm.deal.add."""
     fields: dict[str, Any] = {
@@ -414,16 +425,16 @@ def add_deal(
             continue
         fields[key] = value_norm
 
-    data = _call_method(
-        "crm.deal.add",
-        {
-            "fields": fields,
-            "params": {
-                "REGISTER_SONET_EVENT": "N",
-            },
+    payload = {
+        "fields": fields,
+        "params": {
+            "REGISTER_SONET_EVENT": "N",
         },
-        webhook_env_var=webhook_env_var,
-    )
+    }
+    if log_request_payload:
+        _log_method_payload("crm.deal.add", payload)
+
+    data = _call_method("crm.deal.add", payload, webhook_env_var=webhook_env_var)
     result = data.get("result")
     if isinstance(result, int):
         return result
@@ -437,6 +448,7 @@ def set_deal_product_rows(
     deal_id: int,
     rows: list[dict[str, Any]],
     webhook_env_var: str = "BITRIX24_DEAL_WEBHOOK_URL",
+    log_request_payload: bool = False,
 ) -> bool:
     """Устанавливает товарные позиции сделки методом crm.deal.productrows.set."""
     normalized_rows: list[dict[str, Any]] = []
@@ -463,14 +475,14 @@ def set_deal_product_rows(
     if not normalized_rows:
         return True
 
-    data = _call_method(
-        "crm.deal.productrows.set",
-        {
-            "id": int(deal_id),
-            "rows": normalized_rows,
-        },
-        webhook_env_var=webhook_env_var,
-    )
+    payload = {
+        "id": int(deal_id),
+        "rows": normalized_rows,
+    }
+    if log_request_payload:
+        _log_method_payload("crm.deal.productrows.set", payload)
+
+    data = _call_method("crm.deal.productrows.set", payload, webhook_env_var=webhook_env_var)
     result = data.get("result")
     if isinstance(result, bool):
         return result
