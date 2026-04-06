@@ -52,10 +52,12 @@ python3 -m src.cli.manual --counterparty "Алтай-Строй"
 python3 -m src.cli.manual --counterparty "Алтай-Строй" --ignore-schedule-window
 # Выставить вручную с нижней границей по дате работ
 python3 -m src.cli.manual --counterparty "Алтай-Строй" --from-date 01.03.2026
+# Выставить вручную с диапазоном дат работ
+python3 -m src.cli.manual --counterparty "Алтай-Строй" --from-date 25.03.2026 --to-date 31.03.2026
 # Превью счёта без записи в БД и отправки в T-Bank
 python3 -m src.cli.manual --counterparty "Алтай-Строй" --dry-run
 # Превью, включая уже выставленные работы (если попадают в диапазон)
-python3 -m src.cli.manual --counterparty "Алтай-Строй" --dry-run --dry-run-include-issued --from-date 01.03.2026
+python3 -m src.cli.manual --counterparty "Алтай-Строй" --dry-run --dry-run-include-issued --from-date 01.03.2026 --to-date 31.03.2026
 # Dry-run + реальное создание сделки/задачи в Bitrix24 (без T-Bank, чатов, Sheets и записи в БД)
 python3 -m src.cli.manual --counterparty "Алтай-Строй" --dry-run --dry-run-bitrix
 
@@ -219,6 +221,7 @@ BITRIX24_DEAL_WEBHOOK_URL=https://<portal>.bitrix24.ru/rest/<user_id>/<code>
 - При `INVOICE_WARN_OUT_OF_PERIOD=true` в лог пишется предупреждение, если есть старые невыставленные работы до начала strict-периода.
 - Для `manual` в `strict_period` правая граница берётся концом периода (месяц/полумесяц), а не текущим моментом запуска.
 - Для `manual` можно задать `--from-date DD.MM.YYYY` — это нижняя граница отбора работ в счёт.
+- Для `manual` можно задать `--to-date DD.MM.YYYY` — это верхняя граница отбора работ в счёт.
 - Для `manual` есть `--dry-run` — показывает превью счёта (позиции/сумму/комментарий) без каких-либо изменений.
 - Для `manual --dry-run --dry-run-include-issued` в превью учитываются все работы в диапазоне, включая уже выставленные ранее.
 - Для `manual` есть `--dry-run --dry-run-bitrix` — в dry-run дополнительно создаёт сделку/задачу в Bitrix24 для тестирования, но не делает запись в БД, отправку в T-Bank, Sheets и чат-уведомления.

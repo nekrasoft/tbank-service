@@ -3,6 +3,7 @@ CLI: ручное выставление счёта для одного конт
 Запуск: python3 -m src.cli.manual --counterparty "Алтай-Строй"
 Или: python3 -m src.cli.manual --counterparty "Алтай-Строй" --ignore-schedule-window
 Или: python3 -m src.cli.manual --counterparty "Алтай-Строй" --from-date 01.03.2026
+Или: python3 -m src.cli.manual --counterparty "Алтай-Строй" --from-date 01.03.2026 --to-date 31.03.2026
 Или: python3 -m src.cli.manual --counterparty "Алтай-Строй" --dry-run
 Или: python3 -m src.cli.manual --counterparty "Алтай-Строй" --dry-run --dry-run-bitrix
 --counterparty ожидает короткое имя контрагента (short_name).
@@ -169,6 +170,7 @@ def _prepare_pending_invoices(
     *,
     ignore_schedule_window: bool = False,
     from_date: date | None = None,
+    to_date: date | None = None,
     dry_run: bool = False,
     dry_run_include_issued: bool = False,
 ) -> list[dict[str, Any]]:
@@ -215,6 +217,16 @@ def _prepare_pending_invoices(
         )
         if from_date is not None:
             date_from = max(date_from, from_date) if date_from is not None else from_date
+        if to_date is not None:
+            date_to = min(date_to, to_date) if date_to is not None else to_date
+        if date_from is not None and date_to is not None and date_from > date_to:
+            logger.error(
+                "Пустой диапазон дат для %s: from_date=%s, to_date=%s",
+                counterparty,
+                date_from.strftime("%d.%m.%Y"),
+                date_to.strftime("%d.%m.%Y"),
+            )
+            return []
         if strict_period and warn_out_of_period and date_from is not None:
             old_count = works_repo.count_uninvoiced_before_date(
                 session,
@@ -431,6 +443,12 @@ def main() -> None:
         help="Учитывать работы начиная с даты DD.MM.YYYY (нижняя граница отбора)",
     )
     parser.add_argument(
+        "--to-date",
+        type=_parse_date_arg,
+        default=None,
+        help="Учитывать работы до даты DD.MM.YYYY включительно (верхняя граница отбора)",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Собрать и показать превью счёта без записи в БД и отправки в T-Bank",
@@ -456,11 +474,14 @@ def main() -> None:
         parser.error("--dry-run-bitrix можно использовать только вместе с --dry-run")
     if args.dry_run_include_issued and not args.dry_run:
         parser.error("--dry-run-include-issued можно использовать только вместе с --dry-run")
+    if args.from_date and args.to_date and args.from_date > args.to_date:
+        parser.error("--from-date не может быть больше --to-date")
 
     prepared_invoices = _prepare_pending_invoices(
         args.counterparty,
         ignore_schedule_window=args.ignore_schedule_window,
         from_date=args.from_date,
+        to_date=args.to_date,
         dry_run=args.dry_run,
         dry_run_include_issued=args.dry_run_include_issued,
     )
