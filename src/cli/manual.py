@@ -170,6 +170,7 @@ def _prepare_pending_invoices(
     ignore_schedule_window: bool = False,
     from_date: date | None = None,
     dry_run: bool = False,
+    dry_run_include_issued: bool = False,
 ) -> list[dict[str, Any]]:
     """Подготовка и фиксация одного или нескольких pending-счётов в БД."""
     from src.db.connection import get_session
@@ -228,7 +229,7 @@ def _prepare_pending_invoices(
                     date_from.strftime("%d.%m.%Y"),
                 )
 
-        if dry_run and from_date is not None:
+        if dry_run and dry_run_include_issued:
             works = works_repo.get_by_counterparty(
                 session,
                 counterparty,
@@ -250,7 +251,7 @@ def _prepare_pending_invoices(
                 date_to=date_to,
             )
         if not works:
-            if dry_run and from_date is not None:
+            if dry_run and dry_run_include_issued:
                 logger.error(
                     "Нет работ для контрагента %s в заданном диапазоне (включая уже выставленные)",
                     counterparty,
@@ -442,15 +443,26 @@ def main() -> None:
             "(остальные внешние вызовы и запись в БД останутся отключены)"
         ),
     )
+    parser.add_argument(
+        "--dry-run-include-issued",
+        action="store_true",
+        help=(
+            "Вместе с --dry-run учитывать работы из диапазона независимо от того, "
+            "привязаны ли они уже к выставленным счетам"
+        ),
+    )
     args = parser.parse_args()
     if args.dry_run_bitrix and not args.dry_run:
         parser.error("--dry-run-bitrix можно использовать только вместе с --dry-run")
+    if args.dry_run_include_issued and not args.dry_run:
+        parser.error("--dry-run-include-issued можно использовать только вместе с --dry-run")
 
     prepared_invoices = _prepare_pending_invoices(
         args.counterparty,
         ignore_schedule_window=args.ignore_schedule_window,
         from_date=args.from_date,
         dry_run=args.dry_run,
+        dry_run_include_issued=args.dry_run_include_issued,
     )
     if not prepared_invoices:
         sys.exit(1)
