@@ -386,6 +386,7 @@ def add_deal(
     fields: dict[str, Any] = {
         "TITLE": str(title).strip()[:255],
         "ASSIGNED_BY_ID": 33036,
+        "CATEGORY_ID": 102,
     }
 
     if company_id is not None:
