@@ -385,7 +385,7 @@ def add_deal(
     """Создаёт сделку в Bitrix24 CRM методом crm.deal.add."""
     fields: dict[str, Any] = {
         "TITLE": str(title).strip()[:255],
-        "ASSIGNED_BY_ID": 33036,
+        "ASSIGNED_BY_ID": 31746,
         "CATEGORY_ID": 102,
     }
 
@@ -439,9 +439,12 @@ def add_deal(
     data = _call_method("crm.deal.add", payload, webhook_env_var=webhook_env_var)
     result = data.get("result")
     if isinstance(result, int):
+        logger.info("Bitrix24: crm.deal.add успешно, deal_id=%s", result)
         return result
     if isinstance(result, str) and result.isdigit():
-        return int(result)
+        deal_id = int(result)
+        logger.info("Bitrix24: crm.deal.add успешно, deal_id=%s", deal_id)
+        return deal_id
     raise RuntimeError(f"Неожиданный ответ Bitrix24 crm.deal.add: {data}")
 
 
