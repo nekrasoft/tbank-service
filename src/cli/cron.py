@@ -84,14 +84,15 @@ def _get_uninvoiced_counterparties() -> list[str]:
         session.close()
 
 
-def _prepare_pending_invoice(counterparty_name: str, run_at: datetime) -> dict[str, Any] | None:
-    """Подготовка и фиксация pending-счёта в БД до вызова внешнего API."""
+def _prepare_pending_invoices(counterparty_name: str, run_at: datetime) -> list[dict[str, Any]]:
+    """Подготовка и фиксация одного или нескольких pending-счётов в БД."""
     from src.db.connection import get_session
     from src.db.repos import counterparties as cp_repo
     from src.db.repos import invoices as inv_repo
     from src.db.repos import invoice_number as num_repo
     from src.db.repos import works as works_repo
     from src.invoice.builder import build_invoice_comment, build_invoice_items
+    from src.invoice.splitter import split_works_for_counterparty
     from src.invoice.window import build_invoice_work_date_window, env_bool
 
     session = get_session()
@@ -102,14 +103,14 @@ def _prepare_pending_invoice(counterparty_name: str, run_at: datetime) -> dict[s
                 "Контрагент не найден: %s — пропуск",
                 counterparty_name,
             )
-            return None
+            return []
         if not _is_counterparty_due(cp.invoice_schedule, run_at):
             logger.info(
                 "Контрагент %s (schedule=%s): вне окна выставления — пропуск",
                 counterparty_name,
                 cp.invoice_schedule,
             )
-            return None
+            return []
 
         strict_period = env_bool("INVOICE_STRICT_PERIOD", False)
         warn_out_of_period = env_bool("INVOICE_WARN_OUT_OF_PERIOD", True)
@@ -139,65 +140,87 @@ def _prepare_pending_invoice(counterparty_name: str, run_at: datetime) -> dict[s
             date_to=date_to,
         )
         if not works:
-            return None
+            return []
 
-        items = build_invoice_items(session, works, cp.id)
-        if not items:
-            logger.warning("Нет цен для %s — пропуск", counterparty_name)
-            return None
-        comment = build_invoice_comment(works)
+        work_groups = split_works_for_counterparty(
+            counterparty_short_name=cp.short_name,
+            works=works,
+        )
+        if not work_groups:
+            return []
 
         today = date.today()
         due_date = today + timedelta(days=14)
-        inv_num = num_repo.get_next_number(session)
-        inv = inv_repo.create(
-            session,
-            invoice_number=inv_num,
-            tbank_invoice_id=None,
-            counterparty_id=cp.id,
-            due_date=due_date,
-            status="pending_send",
-        )
-        for item in items:
-            inv_repo.add_item(
-                session,
-                invoice_id=inv.id,
-                name=item["name"],
-                price=item["price"],
-                amount=item["amount"],
-                unit=item.get("unit", "шт"),
-                vat=item.get("vat", "None"),
-            )
+        prepared_invoices: list[dict[str, Any]] = []
+        for group in work_groups:
+            group_works = group.works
+            items = build_invoice_items(session, group_works, cp.id)
+            if not items:
+                logger.warning(
+                    "Нет цен для %s (группа '%s') — пропуск контрагента",
+                    counterparty_name,
+                    group.label or group.key,
+                )
+                return []
+            comment = build_invoice_comment(group_works)
 
-        claimed = works_repo.update_invoice_id(session, [w.id for w in works], inv.id)
-        if claimed != len(works):
-            session.rollback()
-            logger.warning(
-                "Работы изменились параллельно для %s (ожидалось %s, обновлено %s) — пропуск",
-                counterparty_name,
-                len(works),
-                claimed,
+            inv_num = num_repo.get_next_number(session)
+            inv = inv_repo.create(
+                session,
+                invoice_number=inv_num,
+                tbank_invoice_id=None,
+                counterparty_id=cp.id,
+                due_date=due_date,
+                status="pending_send",
             )
-            return None
+            for item in items:
+                inv_repo.add_item(
+                    session,
+                    invoice_id=inv.id,
+                    name=item["name"],
+                    price=item["price"],
+                    amount=item["amount"],
+                    unit=item.get("unit", "шт"),
+                    vat=item.get("vat", "None"),
+                )
+
+            claimed = works_repo.update_invoice_id(session, [w.id for w in group_works], inv.id)
+            if claimed != len(group_works):
+                session.rollback()
+                logger.warning(
+                    "Работы изменились параллельно для %s (группа '%s', ожидалось %s, обновлено %s) — пропуск",
+                    counterparty_name,
+                    group.label or group.key,
+                    len(group_works),
+                    claimed,
+                )
+                return []
+
+            prepared_invoices.append(
+                {
+                    "invoice_id": inv.id,
+                    "invoice_number": inv_num,
+                    "counterparty_name": cp.name,
+                    "counterparty_short_name": cp.short_name,
+                    "bitrix_company_id": cp.bitrix_company_id,
+                    "payer_name": cp.name,
+                    "payer_inn": cp.inn,
+                    "payer_kpp": cp.kpp or "",
+                    "email": cp.email or None,
+                    "contact_phone": cp.phone or None,
+                    "due_date": due_date,
+                    "invoice_date": today,
+                    "items": items,
+                    "comment": comment,
+                    "sheet_row_hashes": [w.sheet_row_hash for w in group_works if w.sheet_row_hash],
+                    "split_group_key": group.key,
+                    "split_group_label": group.label,
+                    "works_count": len(group_works),
+                }
+            )
 
         session.commit()
-        return {
-            "invoice_id": inv.id,
-            "invoice_number": inv_num,
-            "counterparty_name": cp.name,
-            "counterparty_short_name": cp.short_name,
-            "bitrix_company_id": cp.bitrix_company_id,
-            "payer_name": cp.name,
-            "payer_inn": cp.inn,
-            "payer_kpp": cp.kpp or "",
-            "email": cp.email or None,
-            "contact_phone": cp.phone or None,
-            "due_date": due_date,
-            "invoice_date": today,
-            "items": items,
-            "comment": comment,
-            "sheet_row_hashes": [w.sheet_row_hash for w in works if w.sheet_row_hash],
-        }
+        return prepared_invoices
     except Exception:
         session.rollback()
         raise
@@ -276,104 +299,123 @@ def main() -> None:
         return
 
     for counterparty_name in counterparties:
-        prepared: dict[str, Any] | None = None
-        sent_to_tbank = False
         try:
-            prepared = _prepare_pending_invoice(counterparty_name, run_at)
-            if not prepared:
-                continue
-
-            invoice_number = prepared["invoice_number"]
-            resp = send_invoice(
-                invoice_number=invoice_number,
-                due_date=prepared["due_date"],
-                invoice_date=prepared["invoice_date"],
-                payer_name=prepared["payer_name"],
-                payer_inn=prepared["payer_inn"],
-                payer_kpp=prepared["payer_kpp"],
-                items=prepared["items"],
-                email=DEBUG_FORCE_EMAIL or prepared["email"],
-                contact_phone=prepared["contact_phone"],
-                comment=prepared["comment"],
-            )
-            sent_to_tbank = True
-            tbank_id = resp.get("invoiceId") or resp.get("id")
-            invoice_link = (
-                resp.get("paymentLink")
-                or resp.get("invoiceLink")
-                or resp.get("link")
-            )
-            pdf_url = resp.get("pdfUrl")
-            _mark_invoice_issued(
-                invoice_id=prepared["invoice_id"],
-                tbank_invoice_id=str(tbank_id) if tbank_id else None,
-                pdf_url=str(pdf_url) if pdf_url else None,
-            )
-            try:
-                marked_rows = mark_document_in_sheet(
-                    sheet_row_hashes=prepared["sheet_row_hashes"],
-                    invoice_number=invoice_number,
-                    invoice_date=prepared["invoice_date"],
-                )
-                logger.info(
-                    "Sheets: для счёта %s заполнена колонка 'Документ' в %s строках",
-                    invoice_number,
-                    marked_rows,
-                )
-            except Exception:
-                logger.exception("Ошибка записи в Sheets по счёту %s", invoice_number)
-
-            try:
-                send_invoice_notification_bytes(
-                    counterparty_name=prepared["counterparty_name"],
-                    invoice_number=invoice_number,
-                    tbank_invoice_id=str(tbank_id) if tbank_id else None,
-                    invoice_link=str(invoice_link) if invoice_link else None,
-                )
-            except Exception:
-                logger.exception("Ошибка Telegram-уведомления по счёту %s", invoice_number)
-            bitrix_task_url: str | None = None
-            try:
-                bitrix_task_url = create_invoice_task(
-                    counterparty_name=prepared["counterparty_name"],
-                    counterparty_short_name=prepared["counterparty_short_name"],
-                    invoice_number=invoice_number,
-                    invoice_date=prepared["invoice_date"],
-                    bitrix_company_id=prepared["bitrix_company_id"],
-                    tbank_invoice_id=str(tbank_id) if tbank_id else None,
-                    invoice_link=str(invoice_link) if invoice_link else None,
-                    pdf_url=str(pdf_url) if pdf_url else None,
-                    invoice_items=prepared["items"],
-                )
-            except Exception:
-                logger.exception("Ошибка создания задачи Bitrix24 по счёту %s", invoice_number)
-            try:
-                send_max_notification(
-                    counterparty_name=prepared["counterparty_name"],
-                    invoice_number=invoice_number,
-                    bitrix_task_url=bitrix_task_url,
-                )
-            except Exception:
-                logger.exception("Ошибка MAX-уведомления по счёту %s", invoice_number)
-            issued += 1
-            logger.info("Счёт %s выставлен для %s", invoice_number, prepared["counterparty_name"])
-            time.sleep(TBANK_DELAY_SEC)
+            prepared_invoices = _prepare_pending_invoices(counterparty_name, run_at)
         except Exception as e:
-            if prepared is not None and not sent_to_tbank:
+            errors.append(f"{counterparty_name}: подготовка pending-счетов — {e}")
+            logger.exception("Ошибка подготовки счетов для %s", counterparty_name)
+            continue
+
+        if not prepared_invoices:
+            continue
+
+        for prepared in prepared_invoices:
+            sent_to_tbank = False
+            invoice_number = prepared["invoice_number"]
+            try:
+                resp = send_invoice(
+                    invoice_number=invoice_number,
+                    due_date=prepared["due_date"],
+                    invoice_date=prepared["invoice_date"],
+                    payer_name=prepared["payer_name"],
+                    payer_inn=prepared["payer_inn"],
+                    payer_kpp=prepared["payer_kpp"],
+                    items=prepared["items"],
+                    email=DEBUG_FORCE_EMAIL or prepared["email"],
+                    contact_phone=prepared["contact_phone"],
+                    comment=prepared["comment"],
+                )
+                sent_to_tbank = True
+                tbank_id = resp.get("invoiceId") or resp.get("id")
+                invoice_link = (
+                    resp.get("paymentLink")
+                    or resp.get("invoiceLink")
+                    or resp.get("link")
+                )
+                pdf_url = resp.get("pdfUrl")
+                _mark_invoice_issued(
+                    invoice_id=prepared["invoice_id"],
+                    tbank_invoice_id=str(tbank_id) if tbank_id else None,
+                    pdf_url=str(pdf_url) if pdf_url else None,
+                )
                 try:
-                    _mark_invoice_failed(invoice_id=prepared["invoice_id"])
+                    marked_rows = mark_document_in_sheet(
+                        sheet_row_hashes=prepared["sheet_row_hashes"],
+                        invoice_number=invoice_number,
+                        invoice_date=prepared["invoice_date"],
+                    )
+                    logger.info(
+                        "Sheets: для счёта %s заполнена колонка 'Документ' в %s строках",
+                        invoice_number,
+                        marked_rows,
+                    )
                 except Exception:
-                    logger.exception(
-                        "Не удалось пометить счёт %s как failed_send",
+                    logger.exception("Ошибка записи в Sheets по счёту %s", invoice_number)
+
+                try:
+                    send_invoice_notification_bytes(
+                        counterparty_name=prepared["counterparty_name"],
+                        invoice_number=invoice_number,
+                        tbank_invoice_id=str(tbank_id) if tbank_id else None,
+                        invoice_link=str(invoice_link) if invoice_link else None,
+                    )
+                except Exception:
+                    logger.exception("Ошибка Telegram-уведомления по счёту %s", invoice_number)
+                bitrix_task_url: str | None = None
+                try:
+                    bitrix_task_url = create_invoice_task(
+                        counterparty_name=prepared["counterparty_name"],
+                        counterparty_short_name=prepared["counterparty_short_name"],
+                        invoice_number=invoice_number,
+                        invoice_date=prepared["invoice_date"],
+                        bitrix_company_id=prepared["bitrix_company_id"],
+                        tbank_invoice_id=str(tbank_id) if tbank_id else None,
+                        invoice_link=str(invoice_link) if invoice_link else None,
+                        pdf_url=str(pdf_url) if pdf_url else None,
+                        invoice_items=prepared["items"],
+                    )
+                except Exception:
+                    logger.exception("Ошибка создания задачи Bitrix24 по счёту %s", invoice_number)
+                try:
+                    send_max_notification(
+                        counterparty_name=prepared["counterparty_name"],
+                        invoice_number=invoice_number,
+                        bitrix_task_url=bitrix_task_url,
+                    )
+                except Exception:
+                    logger.exception("Ошибка MAX-уведомления по счёту %s", invoice_number)
+                issued += 1
+                split_label = prepared.get("split_group_label") or prepared.get("split_group_key")
+                if split_label:
+                    logger.info(
+                        "Счёт %s выставлен для %s (группа: %s)",
+                        invoice_number,
+                        prepared["counterparty_name"],
+                        split_label,
+                    )
+                else:
+                    logger.info("Счёт %s выставлен для %s", invoice_number, prepared["counterparty_name"])
+                time.sleep(TBANK_DELAY_SEC)
+            except Exception as e:
+                if not sent_to_tbank:
+                    try:
+                        _mark_invoice_failed(invoice_id=prepared["invoice_id"])
+                    except Exception:
+                        logger.exception(
+                            "Не удалось пометить счёт %s как failed_send",
+                            prepared["invoice_number"],
+                        )
+                else:
+                    logger.error(
+                        "Счёт %s отправлен в T-Bank, но локальная фиксация завершилась ошибкой",
                         prepared["invoice_number"],
                     )
-            if prepared is not None and sent_to_tbank:
-                logger.error(
-                    "Счёт %s отправлен в T-Bank, но локальная фиксация завершилась ошибкой",
-                    prepared["invoice_number"],
-                )
-            errors.append(f"{counterparty_name}: {e}")
-            logger.exception("Ошибка при выставлении счёта для %s", counterparty_name)
+                split_label = prepared.get("split_group_label") or prepared.get("split_group_key")
+                if split_label:
+                    errors.append(f"{counterparty_name}/{split_label}: {e}")
+                else:
+                    errors.append(f"{counterparty_name}: {e}")
+                logger.exception("Ошибка при выставлении счёта %s для %s", invoice_number, counterparty_name)
 
     logger.info("Крон завершён. Выставлено счетов: %s", issued)
     if errors:

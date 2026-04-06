@@ -1,0 +1,20 @@
+{
+  "counterparties": {
+    "Железно-Киров": {
+      "groups": [
+        {
+          "key": "innograd",
+          "label": "Инноград",
+          "note_contains_any": [
+            "инноград"
+          ]
+        },
+        {
+          "key": "other",
+          "label": "Остальное",
+          "default": true
+        }
+      ]
+    }
+  }
+}
