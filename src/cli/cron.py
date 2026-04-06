@@ -338,6 +338,7 @@ def main() -> None:
                     counterparty_name=prepared["counterparty_name"],
                     counterparty_short_name=prepared["counterparty_short_name"],
                     invoice_number=invoice_number,
+                    invoice_date=prepared["invoice_date"],
                     bitrix_company_id=prepared["bitrix_company_id"],
                     tbank_invoice_id=str(tbank_id) if tbank_id else None,
                     invoice_link=str(invoice_link) if invoice_link else None,

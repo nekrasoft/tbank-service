@@ -359,6 +359,128 @@ def update_requisite(*, requisite_id: int, fields: dict[str, Any]) -> bool:
     raise RuntimeError(f"Неожиданный ответ Bitrix24 crm.requisite.update: {data}")
 
 
+def add_deal(
+    *,
+    title: str,
+    company_id: int | None = None,
+    opportunity: Any | None = None,
+    stage_id: str | None = None,
+    type_id: str | None = None,
+    source_id: str | None = None,
+    address: str | None = None,
+    custom_fields: dict[str, Any] | None = None,
+    webhook_env_var: str = "BITRIX24_DEAL_WEBHOOK_URL",
+) -> int:
+    """Создаёт сделку в Bitrix24 CRM методом crm.deal.add."""
+    fields: dict[str, Any] = {
+        "TITLE": str(title).strip()[:255],
+    }
+
+    if company_id is not None:
+        company_id_int = int(company_id)
+        if company_id_int > 0:
+            fields["COMPANY_ID"] = company_id_int
+
+    if opportunity is not None:
+        if isinstance(opportunity, str):
+            opportunity_norm = opportunity.strip()
+            if opportunity_norm:
+                fields["OPPORTUNITY"] = opportunity_norm
+        else:
+            fields["OPPORTUNITY"] = opportunity
+
+    stage_id_norm = (stage_id or "").strip()
+    if stage_id_norm:
+        fields["STAGE_ID"] = stage_id_norm
+
+    type_id_norm = (type_id or "").strip()
+    if type_id_norm:
+        fields["TYPE_ID"] = type_id_norm
+
+    source_id_norm = (source_id or "").strip()
+    if source_id_norm:
+        fields["SOURCE_ID"] = source_id_norm
+
+    address_norm = (address or "").strip()
+    if address_norm:
+        fields["ADDRESS"] = address_norm
+
+    for field_name, value in (custom_fields or {}).items():
+        key = str(field_name).strip()
+        if not key:
+            continue
+        value_norm = (value or "").strip() if isinstance(value, str) else value
+        if value_norm in (None, ""):
+            continue
+        fields[key] = value_norm
+
+    data = _call_method(
+        "crm.deal.add",
+        {
+            "fields": fields,
+            "params": {
+                "REGISTER_SONET_EVENT": "N",
+            },
+        },
+        webhook_env_var=webhook_env_var,
+    )
+    result = data.get("result")
+    if isinstance(result, int):
+        return result
+    if isinstance(result, str) and result.isdigit():
+        return int(result)
+    raise RuntimeError(f"Неожиданный ответ Bitrix24 crm.deal.add: {data}")
+
+
+def set_deal_product_rows(
+    *,
+    deal_id: int,
+    rows: list[dict[str, Any]],
+    webhook_env_var: str = "BITRIX24_DEAL_WEBHOOK_URL",
+) -> bool:
+    """Устанавливает товарные позиции сделки методом crm.deal.productrows.set."""
+    normalized_rows: list[dict[str, Any]] = []
+    for raw_row in rows:
+        if not isinstance(raw_row, dict):
+            continue
+        row: dict[str, Any] = {}
+        for field_name, value in raw_row.items():
+            key = str(field_name).strip()
+            if not key:
+                continue
+            if value is None:
+                continue
+            if isinstance(value, str):
+                value_norm = value.strip()
+                if not value_norm:
+                    continue
+                row[key] = value_norm
+            else:
+                row[key] = value
+        if row:
+            normalized_rows.append(row)
+
+    if not normalized_rows:
+        return True
+
+    data = _call_method(
+        "crm.deal.productrows.set",
+        {
+            "id": int(deal_id),
+            "rows": normalized_rows,
+        },
+        webhook_env_var=webhook_env_var,
+    )
+    result = data.get("result")
+    if isinstance(result, bool):
+        return result
+    if isinstance(result, int):
+        return result != 0
+    if isinstance(result, str):
+        return result.strip().lower() in ("1", "y", "yes", "true")
+    raise RuntimeError(f"Неожиданный ответ Bitrix24 crm.deal.productrows.set: {data}")
+
+
 def add_task(
     *,
     title: str,

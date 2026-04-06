@@ -8,7 +8,7 @@
 - Выставление счетов через T-Bank API
 - Генерация акта (PDF)
 - Отправка в Telegram и MAX бухгалтерам
-- Создание задачи в Bitrix24 после выставления счёта (cron/manual)
+- Создание сделки и задачи в Bitrix24 после выставления счёта (cron/manual)
 - Cron: автоматическое выставление в последний день месяца
 - Ручное выставление счёта по запросу
 - Импорт контрагентов в Bitrix24 CRM
@@ -79,14 +79,29 @@ python3 -m src.cli.import_counterparties_to_bitrix24
 BITRIX24_WEBHOOK_URL=https://<portal>.bitrix24.ru/rest/<user_id>/<code>
 ```
 
-## Задачи В Bitrix24 По Факту Выставления Счёта
+## Сделки И Задачи В Bitrix24 По Факту Выставления Счёта
 
-- Для `python3 -m src.cli.cron` и `python3 -m src.cli.manual` можно включить создание задачи через отдельный webhook:
+- Для `python3 -m src.cli.cron` и `python3 -m src.cli.manual` можно включить создание сделки и задачи через отдельные webhook:
 
 ```env
 BITRIX24_TASK_WEBHOOK_URL=https://<portal>.bitrix24.ru/rest/<user_id>/<code>
+BITRIX24_DEAL_WEBHOOK_URL=https://<portal>.bitrix24.ru/rest/<user_id>/<code>
 ```
 
+- Параметры сделки фиксированы:
+  - Название: `[dd.mm.yyyy] Вывоз бункеров`
+  - Стадия: `C102:FINAL_INVOICE`
+  - Сумма (`OPPORTUNITY`): сумма по счёту
+  - Клиент: `COMPANY_ID=counterparties.bitrix_company_id`
+  - Тип: `TYPE_ID=SALE`
+  - Источник: `SOURCE_ID=PARTNER`
+  - Услуги: `UF_CRM_1640764372166=2558`
+  - Адрес объекта: `ADDRESS=Киров`
+  - Субъект: `UF_CRM_1640765412209=174`
+  - Способ оплаты: `UF_CRM_AMO_586713=544`
+  - Город: `UF_CRM_AMO_631688=Киров`
+  - Направление: `UF_CRM_1680515310897=4818`
+  - Товарные позиции (`crm.deal.productrows.set`): название `Услуга по вывозу мусора из контейнера 8м3`, количество/цена/сумма берутся из строк счёта.
 - Параметры задачи фиксированы:
   - Название: `[Киров] Обработать счет №<NUM> (<SHORT_NAME>)`
   - Исполнитель: `31648`
@@ -97,6 +112,7 @@ BITRIX24_TASK_WEBHOOK_URL=https://<portal>.bitrix24.ru/rest/<user_id>/<code>
   - Дедлайн: `+1 сутки` от момента создания
 - Описание задачи в BBCode (жирный заголовок/блок), также добавляются `pdfUrl` и сумма счёта.
 - При наличии `counterparties.bitrix_company_id` задача связывается с CRM-компанией через `UF_CRM_TASK` в формате `CO_<ID>`.
+- После успешного создания сделки задача дополнительно связывается со сделкой через `UF_CRM_TASK` в формате `D_<DEAL_ID>`.
 - Задача создаётся до отправки уведомления в MAX; если создана успешно, в сообщение MAX добавляется ссылка на задачу.
 
 - Полезные флаги:
