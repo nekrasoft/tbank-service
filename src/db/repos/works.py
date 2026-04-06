@@ -44,6 +44,24 @@ def get_uninvoiced_by_counterparty(
     return list(result.scalars().all())
 
 
+def get_by_counterparty(
+    session: Session,
+    counterparty_name: str,
+    *,
+    date_from: date | None = None,
+    date_to: date | None = None,
+) -> list[Work]:
+    """Получение всех работ для контрагента (включая уже выставленные)."""
+    stmt = _apply_date_bounds(
+        select(Work)
+        .where(Work.counterparty_name == counterparty_name),
+        date_from=date_from,
+        date_to=date_to,
+    )
+    result = session.execute(stmt.order_by(Work.date, Work.id))
+    return list(result.scalars().all())
+
+
 def get_uninvoiced_by_counterparty_for_update(
     session: Session,
     counterparty_name: str,

@@ -228,7 +228,14 @@ def _prepare_pending_invoices(
                     date_from.strftime("%d.%m.%Y"),
                 )
 
-        if dry_run:
+        if dry_run and from_date is not None:
+            works = works_repo.get_by_counterparty(
+                session,
+                counterparty,
+                date_from=date_from,
+                date_to=date_to,
+            )
+        elif dry_run:
             works = works_repo.get_uninvoiced_by_counterparty(
                 session,
                 counterparty,
@@ -243,7 +250,13 @@ def _prepare_pending_invoices(
                 date_to=date_to,
             )
         if not works:
-            logger.error("Нет невыставленных работ для контрагента %s", counterparty)
+            if dry_run and from_date is not None:
+                logger.error(
+                    "Нет работ для контрагента %s в заданном диапазоне (включая уже выставленные)",
+                    counterparty,
+                )
+            else:
+                logger.error("Нет невыставленных работ для контрагента %s", counterparty)
             return []
 
         work_groups = split_works_for_counterparty(
