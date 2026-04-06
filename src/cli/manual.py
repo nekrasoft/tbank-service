@@ -4,6 +4,7 @@ CLI: ручное выставление счёта для одного конт
 Или: python3 -m src.cli.manual --counterparty "Алтай-Строй" --ignore-schedule-window
 Или: python3 -m src.cli.manual --counterparty "Алтай-Строй" --from-date 01.03.2026
 Или: python3 -m src.cli.manual --counterparty "Алтай-Строй" --dry-run
+Или: python3 -m src.cli.manual --counterparty "Алтай-Строй" --dry-run --dry-run-bitrix
 --counterparty ожидает короткое имя контрагента (short_name).
 """
 from __future__ import annotations
@@ -81,7 +82,7 @@ def _format_date_range(date_from: date | None, date_to: date | None) -> str:
     return "без ограничений"
 
 
-def _log_dry_run_preview(prepared: dict[str, Any]) -> None:
+def _log_dry_run_preview(prepared: dict[str, Any], *, dry_run_bitrix: bool = False) -> None:
     """Логирование превью счёта в dry-run режиме."""
     items = prepared.get("items") or []
     logger.info(
@@ -111,7 +112,18 @@ def _log_dry_run_preview(prepared: dict[str, Any]) -> None:
     logger.info("DRY-RUN: итоговая сумма счёта=%s", _format_money(_calculate_items_total(items)))
     if prepared.get("comment"):
         logger.info("DRY-RUN: комментарий к счёту:\n%s", prepared["comment"])
-    logger.info("DRY-RUN: изменения в БД и внешние вызовы не выполнялись")
+    if dry_run_bitrix:
+        logger.info(
+            "DRY-RUN: запись в БД, отправка в T-Bank, запись в Sheets и чат-уведомления отключены; "
+            "будет выполнен только вызов Bitrix24",
+        )
+    else:
+        logger.info("DRY-RUN: изменения в БД и внешние вызовы не выполнялись")
+
+
+def _build_dry_run_invoice_number() -> str:
+    """Формирует тестовый номер счёта для dry-run вызова Bitrix24."""
+    return f"DRYRUN-{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
 
 
 def _is_last_day_of_month(target_date: date) -> bool:
@@ -243,11 +255,13 @@ def _prepare_pending_invoice(
             return {
                 "counterparty_name": cp.name,
                 "counterparty_short_name": cp.short_name,
+                "bitrix_company_id": cp.bitrix_company_id,
                 "items": items,
                 "comment": comment,
                 "works_count": len(works),
                 "date_from": date_from,
                 "date_to": date_to,
+                "invoice_date": date.today(),
             }
 
         today = date.today()
@@ -372,7 +386,17 @@ def main() -> None:
         action="store_true",
         help="Собрать и показать превью счёта без записи в БД и отправки в T-Bank",
     )
+    parser.add_argument(
+        "--dry-run-bitrix",
+        action="store_true",
+        help=(
+            "Вместе с --dry-run выполнить реальное создание сделки/задачи в Bitrix24 "
+            "(остальные внешние вызовы и запись в БД останутся отключены)"
+        ),
+    )
     args = parser.parse_args()
+    if args.dry_run_bitrix and not args.dry_run:
+        parser.error("--dry-run-bitrix можно использовать только вместе с --dry-run")
 
     prepared = _prepare_pending_invoice(
         args.counterparty,
@@ -383,7 +407,36 @@ def main() -> None:
     if not prepared:
         sys.exit(1)
     if args.dry_run:
-        _log_dry_run_preview(prepared)
+        _log_dry_run_preview(prepared, dry_run_bitrix=args.dry_run_bitrix)
+        if not args.dry_run_bitrix:
+            return
+
+        from src.notifications.bitrix_task import create_invoice_task
+
+        dry_run_invoice_number = _build_dry_run_invoice_number()
+        logger.warning(
+            "DRY-RUN Bitrix-only: создание сделки/задачи в Bitrix24 с тестовым номером счёта %s",
+            dry_run_invoice_number,
+        )
+        try:
+            bitrix_task_url = create_invoice_task(
+                counterparty_name=prepared["counterparty_name"],
+                counterparty_short_name=prepared["counterparty_short_name"],
+                invoice_number=dry_run_invoice_number,
+                invoice_date=prepared["invoice_date"],
+                bitrix_company_id=prepared["bitrix_company_id"],
+                invoice_items=prepared["items"],
+            )
+            if bitrix_task_url:
+                logger.info("DRY-RUN Bitrix-only: задача создана, url=%s", bitrix_task_url)
+            else:
+                logger.info(
+                    "DRY-RUN Bitrix-only: вызов Bitrix24 выполнен (возможно, без ссылки на задачу); "
+                    "проверьте логи выше",
+                )
+        except Exception:
+            logger.exception("DRY-RUN Bitrix-only: ошибка создания сделки/задачи в Bitrix24")
+            sys.exit(1)
         return
 
     from src.notifications.bitrix_task import create_invoice_task

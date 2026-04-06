@@ -53,6 +53,8 @@ python3 -m src.cli.manual --counterparty "Алтай-Строй" --ignore-schedu
 python3 -m src.cli.manual --counterparty "Алтай-Строй" --from-date 01.03.2026
 # Превью счёта без записи в БД и отправки в T-Bank
 python3 -m src.cli.manual --counterparty "Алтай-Строй" --dry-run
+# Dry-run + реальное создание сделки/задачи в Bitrix24 (без T-Bank, чатов, Sheets и записи в БД)
+python3 -m src.cli.manual --counterparty "Алтай-Строй" --dry-run --dry-run-bitrix
 
 # Cron (последний день месяца)
 python3 -m src.cli.cron
@@ -182,6 +184,7 @@ BITRIX24_DEAL_WEBHOOK_URL=https://<portal>.bitrix24.ru/rest/<user_id>/<code>
 - Для `manual` в `strict_period` правая граница берётся концом периода (месяц/полумесяц), а не текущим моментом запуска.
 - Для `manual` можно задать `--from-date DD.MM.YYYY` — это нижняя граница отбора работ в счёт.
 - Для `manual` есть `--dry-run` — показывает превью счёта (позиции/сумму/комментарий) без каких-либо изменений.
+- Для `manual` есть `--dry-run --dry-run-bitrix` — в dry-run дополнительно создаёт сделку/задачу в Bitrix24 для тестирования, но не делает запись в БД, отправку в T-Bank, Sheets и чат-уведомления.
 
 ## Структура
 
