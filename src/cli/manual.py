@@ -86,12 +86,14 @@ def _format_date_range(date_from: date | None, date_to: date | None) -> str:
 def _log_dry_run_preview(prepared: dict[str, Any], *, dry_run_bitrix: bool = False) -> None:
     """Логирование превью счёта в dry-run режиме."""
     items = prepared.get("items") or []
+    target_email = prepared.get("email")
     logger.info(
-        "DRY-RUN: контрагент=%s, период=%s, работ=%s, позиций=%s",
+        "DRY-RUN: контрагент=%s, период=%s, работ=%s, позиций=%s, email=%s",
         prepared.get("counterparty_name"),
         _format_date_range(prepared.get("date_from"), prepared.get("date_to")),
         prepared.get("works_count", 0),
         len(items),
+        target_email if target_email else "(не задан)",
     )
     for idx, item in enumerate(items, start=1):
         try:
@@ -294,6 +296,7 @@ def _prepare_pending_invoices(
                         "counterparty_name": cp.name,
                         "counterparty_short_name": cp.short_name,
                         "bitrix_company_id": cp.bitrix_company_id,
+                        "email": group.email if group.email is not None else (cp.email or None),
                         "items": items,
                         "comment": build_invoice_comment(group.works),
                         "works_count": len(group.works),
@@ -359,7 +362,7 @@ def _prepare_pending_invoices(
                     "payer_name": cp.name,
                     "payer_inn": cp.inn,
                     "payer_kpp": cp.kpp or "",
-                    "email": cp.email or None,
+                    "email": group.email if group.email is not None else (cp.email or None),
                     "contact_phone": cp.phone or None,
                     "due_date": due_date,
                     "invoice_date": today,

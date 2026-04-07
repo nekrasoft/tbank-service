@@ -5,6 +5,7 @@
         {
           "key": "innograd",
           "label": "Инноград",
+          "email": "ovchinnikov.va@zhcom.ru",
           "note_contains_any": [
             "инноград"
           ]

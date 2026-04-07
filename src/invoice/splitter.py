@@ -23,6 +23,7 @@ class InvoiceWorkGroup:
     """Группа работ для отдельного счёта."""
     key: str
     label: str | None
+    email: str | list[str] | None
     works: list[Work]
 
 
@@ -30,6 +31,7 @@ class InvoiceWorkGroup:
 class _GroupRule:
     key: str
     label: str | None
+    email: str | list[str] | None
     note_contains_any: list[str]
     is_default: bool
 
@@ -56,6 +58,19 @@ def _normalize_group_rules(raw_groups: Any) -> list[_GroupRule]:
     if not isinstance(raw_groups, list):
         return []
 
+    def _normalize_email(raw_email: Any) -> str | list[str] | None:
+        if isinstance(raw_email, str):
+            email = raw_email.strip()
+            return email or None
+        if isinstance(raw_email, list):
+            emails: list[str] = []
+            for value in raw_email:
+                email = str(value).strip()
+                if email:
+                    emails.append(email)
+            return emails or None
+        return None
+
     normalized: list[_GroupRule] = []
     for idx, raw in enumerate(raw_groups, start=1):
         if not isinstance(raw, dict):
@@ -65,6 +80,7 @@ def _normalize_group_rules(raw_groups: Any) -> list[_GroupRule]:
             key = f"group_{idx}"
         label_raw = raw.get("label")
         label = str(label_raw).strip() if isinstance(label_raw, str) else None
+        email = _normalize_email(raw.get("email"))
         note_tokens_raw = raw.get("note_contains_any")
         note_tokens: list[str] = []
         if isinstance(note_tokens_raw, list):
@@ -77,6 +93,7 @@ def _normalize_group_rules(raw_groups: Any) -> list[_GroupRule]:
             _GroupRule(
                 key=key,
                 label=label or None,
+                email=email,
                 note_contains_any=note_tokens,
                 is_default=is_default,
             )
@@ -100,7 +117,7 @@ def split_works_for_counterparty(
     rules = _load_split_rules()
     counterparties = rules.get("counterparties")
     if not isinstance(counterparties, dict):
-        return [InvoiceWorkGroup(key="default", label=None, works=works)]
+        return [InvoiceWorkGroup(key="default", label=None, email=None, works=works)]
 
     cp_key = (counterparty_short_name or "").strip()
     raw_cp_rules = counterparties.get(cp_key)
@@ -111,17 +128,18 @@ def split_works_for_counterparty(
                 raw_cp_rules = value
                 break
     if not isinstance(raw_cp_rules, dict):
-        return [InvoiceWorkGroup(key="default", label=None, works=works)]
+        return [InvoiceWorkGroup(key="default", label=None, email=None, works=works)]
 
     group_rules = _normalize_group_rules(raw_cp_rules.get("groups"))
     if not group_rules:
-        return [InvoiceWorkGroup(key="default", label=None, works=works)]
+        return [InvoiceWorkGroup(key="default", label=None, email=None, works=works)]
 
     default_rule = next((rule for rule in group_rules if rule.is_default), None)
     if default_rule is None:
         default_rule = _GroupRule(
             key="default",
             label="Остальное",
+            email=None,
             note_contains_any=[],
             is_default=True,
         )
@@ -150,6 +168,7 @@ def split_works_for_counterparty(
             InvoiceWorkGroup(
                 key=rule.key,
                 label=rule.label,
+                email=rule.email,
                 works=group_works,
             )
         )

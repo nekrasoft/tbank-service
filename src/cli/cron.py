@@ -206,7 +206,7 @@ def _prepare_pending_invoices(counterparty_name: str, run_at: datetime) -> list[
                     "payer_name": cp.name,
                     "payer_inn": cp.inn,
                     "payer_kpp": cp.kpp or "",
-                    "email": cp.email or None,
+                    "email": group.email if group.email is not None else (cp.email or None),
                     "contact_phone": cp.phone or None,
                     "due_date": due_date,
                     "invoice_date": today,

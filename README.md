@@ -160,6 +160,7 @@ BITRIX24_DEAL_WEBHOOK_URL=https://<portal>.bitrix24.ru/rest/<user_id>/<code>
 - Правило задаётся на `short_name` контрагента и содержит список групп.
 - Для каждой группы можно указать:
   - `note_contains_any` — список подстрок (в `works.note`, регистр не важен);
+  - `email` — e-mail (или список e-mail) для отправки счета в T-Bank именно для этой группы;
   - `default: true` — группа по умолчанию для всех работ, не попавших в другие группы.
 - Пример (Инноград отдельно, остальное отдельно):
 
@@ -171,6 +172,7 @@ BITRIX24_DEAL_WEBHOOK_URL=https://<portal>.bitrix24.ru/rest/<user_id>/<code>
         {
           "key": "innograd",
           "label": "Инноград",
+          "email": "innograd-buh@example.ru",
           "note_contains_any": ["инноград"]
         },
         {
@@ -185,6 +187,7 @@ BITRIX24_DEAL_WEBHOOK_URL=https://<portal>.bitrix24.ru/rest/<user_id>/<code>
 ```
 
 - При наличии нескольких групп `cron` и `manual` создают несколько счетов в одном запуске (по одному на группу).
+- Если у группы задан `email`, для счета этой группы используется он; иначе берется `counterparties.email`.
 
 ## Выручка Из Google Sheets
 
