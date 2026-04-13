@@ -67,8 +67,7 @@ def send_invoice_notification(
     lines.extend(
         [
             "",
-            "Необходимо в ТБанке создать Акт для данного счета и отправить оба документа в ЭДО",
-            "https://business.tbank.ru/sme/invoices/outgoing/submitted",
+            "Необходимо в ТБанке создать Акт и УПД для данного Счета и отправить все три документа в ЭДО"
         ]
     )
     text = "\n".join(lines)
