@@ -76,6 +76,7 @@ python3 -m src.cli.import_counterparties_to_bitrix24
 - Для каждого контрагента сохраняется `company_id` Bitrix24 в локальное поле `counterparties.bitrix_company_id`.
 - Чтобы заполнить/обновить это поле для существующих записей, запустите импорт повторно.
 - В `COMMENTS` карточки компании записывается служебный комментарий импорта (включая `contract`/строку договора); для уже существующих компаний `COMMENTS` также синхронизируется при импорте.
+- Строка договора `contract` дополнительно записывается в поле компании `UF_CRM_1667795999022`.
 - Поиск выполняется в порядке:
   - `BITRIX24_COMPANY_INN_FIELD` (+ `BITRIX24_COMPANY_KPP_FIELD`, если задано)
   - `BITRIX24_COMPANY_SHORT_NAME_FIELD`

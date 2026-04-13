@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 _DEFAULT_DELAY_SEC = 0.35
 _BITRIX_ENTITY_TYPE_COMPANY = 4
 _DEFAULT_REQUISITE_COUNTRY_ID = 1
+_BITRIX_COMPANY_CONTRACT_FIELD = "UF_CRM_1667795999022"
 _CUSTOM_FIELD_ENV_TO_ATTR = {
     "BITRIX24_COMPANY_SHORT_NAME_FIELD": "short_name",
     "BITRIX24_COMPANY_INN_FIELD": "inn",
@@ -93,6 +94,9 @@ def _build_custom_fields(counterparty) -> dict[str, str]:
         if value in (None, ""):
             continue
         fields[bitrix_field] = str(value)
+    contract_value = str(getattr(counterparty, "contract", "") or "").strip()
+    if contract_value:
+        fields[_BITRIX_COMPANY_CONTRACT_FIELD] = contract_value
     return fields
 
 
@@ -402,9 +406,13 @@ def main() -> None:
                 skipped_existing += 1
                 company_id = existing_id
                 try:
+                    update_fields = {"COMMENTS": comment_text}
+                    contract_value = str(getattr(cp, "contract", "") or "").strip()
+                    if contract_value:
+                        update_fields[_BITRIX_COMPANY_CONTRACT_FIELD] = contract_value
                     comment_updated = update_company(
                         company_id=company_id,
-                        fields={"COMMENTS": comment_text},
+                        fields=update_fields,
                     )
                     if comment_updated:
                         comments_synced += 1
