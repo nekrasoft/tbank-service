@@ -32,6 +32,10 @@ _DEAL_SERVICE_VALUE_BY_OPERATION_TYPE = {
     "container_pickup": 2558,
     "trip_removal": 2550,
 }
+_DEAL_TITLE_DEFAULT_TEXT = "Вывоз бункеров"
+_DEAL_TITLE_TEXT_BY_OPERATION_TYPE = {
+    "trip_removal": "Вывоз мусора",
+}
 _DEAL_SUBJECT_FIELD = "UF_CRM_1640765412209"
 _DEAL_SUBJECT_VALUE = 174
 _DEAL_PAYMENT_FIELD = "UF_CRM_AMO_586713"
@@ -246,7 +250,7 @@ def _create_invoice_deal(
     deal_amount = invoice_amount or Decimal("0.00")
     deal_service_value = _resolve_deal_service_value(invoice_items)
     deal_id = add_deal(
-        title=_build_deal_title(invoice_date),
+        title=_build_deal_title(invoice_date, invoice_items),
         company_id=company_id,
         opportunity=_format_amount_decimal(deal_amount),
         stage_id=_DEAL_STAGE_ID,
@@ -289,15 +293,29 @@ def _create_invoice_deal(
     return deal_id
 
 
-def _build_deal_title(invoice_date: date | datetime | None) -> str:
-    """Заголовок сделки в формате [dd.mm.yyyy] Вывоз бункеров."""
+def _build_deal_title(
+    invoice_date: date | datetime | None,
+    invoice_items: list[dict[str, Any]] | None,
+) -> str:
+    """Заголовок сделки в формате [dd.mm.yyyy] <тип услуги>."""
     if isinstance(invoice_date, datetime):
         dt = invoice_date.astimezone().date() if invoice_date.tzinfo else invoice_date.date()
     elif isinstance(invoice_date, date):
         dt = invoice_date
     else:
         dt = date.today()
-    return f"[{dt.strftime('%d.%m.%Y')}] Вывоз бункеров"
+    deal_title_text = _resolve_deal_title_text(invoice_items)
+    return f"[{dt.strftime('%d.%m.%Y')}] {deal_title_text}"
+
+
+def _resolve_deal_title_text(invoice_items: list[dict[str, Any]] | None) -> str:
+    """Определяет текст заголовка сделки по operation_type позиций счёта."""
+    for item in invoice_items or []:
+        operation_type = _normalize_operation_type(item.get("operation_type"))
+        title_text = _DEAL_TITLE_TEXT_BY_OPERATION_TYPE.get(operation_type)
+        if title_text:
+            return title_text
+    return _DEAL_TITLE_DEFAULT_TEXT
 
 
 def _build_deal_product_rows(
