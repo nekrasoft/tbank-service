@@ -1,9 +1,12 @@
 """
 CLI: отдельный крон синка выписки T-Bank и автозачета оплат по счетам.
 Запуск: python3 -m src.cli.cron_payments
+Или:   python3 -m src.cli.cron_payments --dry-run
+Или:   python3 -m src.cli.cron_payments --dry-run --dry-run-bitrix
 """
 from __future__ import annotations
 
+import argparse
 import hashlib
 import logging
 import os
@@ -61,6 +64,32 @@ def _env_int(name: str, default: int, *, min_value: int | None = None, max_value
     if max_value is not None and value > max_value:
         value = max_value
     return value
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Синк выписки T-Bank и автозачет оплат по invoices",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help=(
+            "Выполнить матчинг в режиме предпросмотра: без синка выписки, "
+            "без сохранения изменений в БД и без внешних вызовов"
+        ),
+    )
+    parser.add_argument(
+        "--dry-run-bitrix",
+        action="store_true",
+        help=(
+            "Вместе с --dry-run выполнить только Bitrix24-обновления "
+            "для счетов, которые в этом прогоне стали бы paid"
+        ),
+    )
+    args = parser.parse_args()
+    if args.dry_run_bitrix and not args.dry_run:
+        parser.error("--dry-run-bitrix можно использовать только вместе с --dry-run")
+    return args
 
 
 
@@ -563,6 +592,22 @@ def _sync_paid_invoices_to_bitrix(newly_paid: list[dict[str, Any]]) -> None:
             )
 
 
+def _log_dry_run_paid_preview(newly_paid: list[dict[str, Any]]) -> None:
+    if not newly_paid:
+        logger.info("DRY-RUN: нет счетов, которые перешли бы в paid")
+        return
+
+    logger.info("DRY-RUN: в paid перешли бы %s счет(ов)", len(newly_paid))
+    for item in newly_paid:
+        logger.info(
+            "DRY-RUN: paid invoice=%s (id=%s, task_id=%s, deal_id=%s)",
+            item.get("invoice_number"),
+            item.get("invoice_id"),
+            item.get("bitrix_task_id"),
+            item.get("bitrix_deal_id"),
+        )
+
+
 def _sync_statement_for_account(
     *,
     account_number: str,
@@ -664,7 +709,11 @@ def _sync_statement_for_account(
 
 
 
-def _run_matching(unmatched_limit: int) -> tuple[int, dict[str, int]]:
+def _run_matching(
+    unmatched_limit: int,
+    *,
+    dry_run: bool = False,
+) -> tuple[int, dict[str, int], list[dict[str, Any]]]:
     from src.db.connection import get_session
     from src.db.repos import invoices as inv_repo
     from src.db.repos import statement_operations as st_ops_repo
@@ -674,12 +723,12 @@ def _run_matching(unmatched_limit: int) -> tuple[int, dict[str, int]]:
         unmatched = st_ops_repo.get_unmatched_incoming(session, limit=unmatched_limit)
         if not unmatched:
             logger.info("Нет новых неприлинкованных входящих операций")
-            return 0, {"paid": 0, "partially_paid": 0, "issued": 0, "updated": 0}
+            return 0, {"paid": 0, "partially_paid": 0, "issued": 0, "updated": 0}, []
 
         open_invoices = inv_repo.get_open_for_payment_matching(session)
         if not open_invoices:
             logger.info("Нет открытых счетов для автозачета оплат")
-            return 0, {"paid": 0, "partially_paid": 0, "issued": 0, "updated": 0}
+            return 0, {"paid": 0, "partially_paid": 0, "issued": 0, "updated": 0}, []
 
         matched_incoming = st_ops_repo.get_matched_incoming_for_invoices(
             session,
@@ -705,7 +754,7 @@ def _run_matching(unmatched_limit: int) -> tuple[int, dict[str, int]]:
 
         if not open_invoice_ids:
             logger.info("Все открытые счета уже полностью оплачены, матчить нечего")
-            return 0, {"paid": 0, "partially_paid": 0, "issued": 0, "updated": 0}
+            return 0, {"paid": 0, "partially_paid": 0, "issued": 0, "updated": 0}, []
 
         matched_count = 0
         touched_invoice_ids: set[int] = set()
@@ -745,12 +794,16 @@ def _run_matching(unmatched_limit: int) -> tuple[int, dict[str, int]]:
 
         if matched_count:
             recalc_stats, newly_paid = _recalculate_payment_state(session, invoice_ids=touched_invoice_ids)
+            if dry_run:
+                session.rollback()
+                return matched_count, recalc_stats, newly_paid
+
             session.commit()
             _sync_paid_invoices_to_bitrix(newly_paid)
-            return matched_count, recalc_stats
+            return matched_count, recalc_stats, newly_paid
 
         session.rollback()
-        return 0, {"paid": 0, "partially_paid": 0, "issued": 0, "updated": 0}
+        return 0, {"paid": 0, "partially_paid": 0, "issued": 0, "updated": 0}, []
     except Exception:
         session.rollback()
         raise
@@ -761,6 +814,7 @@ def _run_matching(unmatched_limit: int) -> tuple[int, dict[str, int]]:
 
 def main() -> None:
     """Точка входа платежного cron: синк выписки + матчинг оплат к invoices."""
+    args = _parse_args()
     account_numbers = _get_account_numbers()
     initial_lookback_days = _env_int(
         "TBANK_STATEMENT_INITIAL_LOOKBACK_DAYS",
@@ -788,12 +842,49 @@ def main() -> None:
     )
 
     logger.info(
-        "Запуск cron_payments accounts=%s initial_lookback_days=%s overlap_minutes=%s page_limit=%s",
+        "Запуск cron_payments accounts=%s initial_lookback_days=%s overlap_minutes=%s page_limit=%s dry_run=%s dry_run_bitrix=%s",
         len(account_numbers),
         initial_lookback_days,
         overlap_minutes,
         page_limit,
+        args.dry_run,
+        args.dry_run_bitrix,
     )
+
+    if args.dry_run:
+        logger.warning(
+            "DRY-RUN: синк выписки отключен; используем только текущие данные в БД"
+        )
+        matched_count, recalc_stats, newly_paid = _run_matching(
+            unmatched_limit,
+            dry_run=True,
+        )
+        _log_dry_run_paid_preview(newly_paid)
+
+        if args.dry_run_bitrix:
+            logger.warning(
+                "DRY-RUN-BITRIX: выполняем Bitrix24-обновления для счетов из dry-run"
+            )
+            _sync_paid_invoices_to_bitrix(newly_paid)
+        else:
+            logger.info(
+                "DRY-RUN: вызовы Bitrix24 отключены (используйте --dry-run --dry-run-bitrix)"
+            )
+
+        logger.info(
+            (
+                "cron_payments DRY-RUN завершен: fetched=%s created=%s matched=%s "
+                "invoice_state_updates=%s (paid=%s partially_paid=%s issued=%s)"
+            ),
+            0,
+            0,
+            matched_count,
+            recalc_stats.get("updated", 0),
+            recalc_stats.get("paid", 0),
+            recalc_stats.get("partially_paid", 0),
+            recalc_stats.get("issued", 0),
+        )
+        return
 
     total_fetched = 0
     total_created = 0
@@ -823,7 +914,7 @@ def main() -> None:
         logger.error("Синк выписки завершился с ошибками: %s", sync_errors)
         sys.exit(1)
 
-    matched_count, recalc_stats = _run_matching(unmatched_limit)
+    matched_count, recalc_stats, _ = _run_matching(unmatched_limit)
 
     logger.info(
         (
