@@ -78,6 +78,8 @@ def _build_comments(counterparty) -> str:
         lines.append(f"kpp: {counterparty.kpp}")
     if counterparty.note:
         lines.append(f"note: {counterparty.note}")
+    if getattr(counterparty, "contract", None):
+        lines.append(f"contract: {counterparty.contract}")
     return "\n".join(lines)
 
 
@@ -342,7 +344,7 @@ def main() -> None:
     parser.add_argument("--stop-on-error", action="store_true", help="Остановить импорт при первой ошибке")
     args = parser.parse_args()
 
-    from src.bitrix.client import add_company
+    from src.bitrix.client import add_company, update_company
 
     if not args.dry_run and not (os.environ.get("BITRIX24_WEBHOOK_URL") or "").strip():
         logger.error("Не задан BITRIX24_WEBHOOK_URL в .env")
@@ -374,6 +376,7 @@ def main() -> None:
     requisites_updated = 0
     requisites_skipped = 0
     bindings_saved = 0
+    comments_synced = 0
     failed = 0
     total = len(counterparties)
 
@@ -394,9 +397,34 @@ def main() -> None:
 
         try:
             existing_id, matched_by = _find_existing_company_id(cp)
+            comment_text = _build_comments(cp)
             if existing_id is not None:
                 skipped_existing += 1
                 company_id = existing_id
+                try:
+                    comment_updated = update_company(
+                        company_id=company_id,
+                        fields={"COMMENTS": comment_text},
+                    )
+                    if comment_updated:
+                        comments_synced += 1
+                    else:
+                        logger.warning(
+                            "[%s/%s] Не удалось обновить COMMENTS для company_id=%s (short_name='%s')",
+                            index,
+                            total,
+                            company_id,
+                            cp.short_name,
+                        )
+                except Exception as update_err:
+                    logger.warning(
+                        "[%s/%s] Ошибка обновления COMMENTS для company_id=%s (short_name='%s'): %s",
+                        index,
+                        total,
+                        company_id,
+                        cp.short_name,
+                        update_err,
+                    )
                 logger.info(
                     "[%s/%s] Уже существует '%s' (short_name='%s'), company_id=%s, match=%s",
                     index,
@@ -411,9 +439,10 @@ def main() -> None:
                     title=cp.name,
                     email=cp.email,
                     phone=cp.phone,
-                    comments=_build_comments(cp),
+                    comments=comment_text,
                     custom_fields=custom_fields,
                 )
+                comments_synced += 1
                 created += 1
                 logger.info(
                     "[%s/%s] Импортирован '%s' (short_name='%s'), company_id=%s",
@@ -471,10 +500,11 @@ def main() -> None:
     else:
         logger.info(
             "Импорт завершён. Компаний создано: %s, компаний пропущено (уже есть): %s, "
-            "реквизитов создано: %s, реквизитов обновлено: %s, реквизитов без изменений: %s, "
+            "COMMENTS синхронизировано: %s, реквизитов создано: %s, реквизитов обновлено: %s, реквизитов без изменений: %s, "
             "связок company_id сохранено: %s, ошибок: %s, всего: %s",
             created,
             skipped_existing,
+            comments_synced,
             requisites_created,
             requisites_updated,
             requisites_skipped,

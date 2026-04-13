@@ -246,6 +246,44 @@ def list_companies(
     )
 
 
+def update_company(
+    *,
+    company_id: int,
+    fields: dict[str, Any],
+    webhook_env_var: str = "BITRIX24_WEBHOOK_URL",
+) -> bool:
+    """Обновляет компанию в Bitrix24 CRM методом crm.company.update."""
+    normalized_fields: dict[str, Any] = {}
+    for field_name, value in (fields or {}).items():
+        key = str(field_name).strip()
+        if not key:
+            continue
+        value_norm = (value or "").strip() if isinstance(value, str) else value
+        if value_norm in (None, ""):
+            continue
+        normalized_fields[key] = value_norm
+
+    if not normalized_fields:
+        return True
+
+    payload = {
+        "id": int(company_id),
+        "fields": normalized_fields,
+        "params": {
+            "REGISTER_SONET_EVENT": "N",
+        },
+    }
+    data = _call_method("crm.company.update", payload, webhook_env_var=webhook_env_var)
+    result = data.get("result")
+    if isinstance(result, bool):
+        return result
+    if isinstance(result, int):
+        return result != 0
+    if isinstance(result, str):
+        return result.strip().lower() in ("1", "y", "yes", "true")
+    raise RuntimeError(f"Неожиданный ответ Bitrix24 crm.company.update: {data}")
+
+
 def list_requisites(
     *,
     filter_fields: dict[str, Any],

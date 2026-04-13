@@ -214,6 +214,7 @@ def _prepare_pending_invoices(counterparty_name: str, run_at: datetime) -> list[
                     "invoice_number": inv_num,
                     "counterparty_name": cp.name,
                     "counterparty_short_name": cp.short_name,
+                    "counterparty_contract": cp.contract or None,
                     "bitrix_company_id": cp.bitrix_company_id,
                     "payer_name": cp.name,
                     "payer_inn": cp.inn,
@@ -378,6 +379,7 @@ def main() -> None:
                     bitrix_task_url = create_invoice_task(
                         counterparty_name=prepared["counterparty_name"],
                         counterparty_short_name=prepared["counterparty_short_name"],
+                        counterparty_contract=prepared.get("counterparty_contract"),
                         invoice_number=invoice_number,
                         invoice_date=prepared["invoice_date"],
                         bitrix_company_id=prepared["bitrix_company_id"],

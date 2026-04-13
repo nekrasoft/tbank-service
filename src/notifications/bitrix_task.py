@@ -73,6 +73,7 @@ def create_invoice_task(
     *,
     counterparty_name: str,
     counterparty_short_name: str | None = None,
+    counterparty_contract: str | None = None,
     invoice_number: str,
     invoice_date: date | datetime | None = None,
     bitrix_company_id: int | None = None,
@@ -89,6 +90,7 @@ def create_invoice_task(
     invoice_amount = _calculate_invoice_amount(invoice_items)
     text = _build_task_description(
         counterparty_name=counterparty_name,
+        counterparty_contract=counterparty_contract,
         invoice_number=invoice_number,
         invoice_amount=invoice_amount,
         tbank_invoice_id=tbank_invoice_id,
@@ -148,6 +150,7 @@ def create_invoice_task(
 def _build_task_description(
     *,
     counterparty_name: str,
+    counterparty_contract: str | None = None,
     invoice_number: str,
     invoice_amount: Decimal | None = None,
     tbank_invoice_id: str | None = None,
@@ -159,8 +162,10 @@ def _build_task_description(
 
     DESCRIPTION_IN_BBCODE=Y нужен, чтобы [B]...[/B] отображался жирным.
     """
+    contract_line = (counterparty_contract or "").strip() or "-"
     lines = [
         f"[B]Контрагент[/B]: {counterparty_name}",
+        f"[B]Договор[/B]: {contract_line}",
     ]
     if invoice_amount is not None:
         lines.append(f"[B]Сумма[/B]: {_format_money(invoice_amount)}")

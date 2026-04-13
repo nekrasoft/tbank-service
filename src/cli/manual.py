@@ -307,6 +307,7 @@ def _prepare_pending_invoices(
                     {
                         "counterparty_name": cp.name,
                         "counterparty_short_name": cp.short_name,
+                        "counterparty_contract": cp.contract or None,
                         "bitrix_company_id": cp.bitrix_company_id,
                         "email": group.email if group.email is not None else (cp.email or None),
                         "items": items,
@@ -370,6 +371,7 @@ def _prepare_pending_invoices(
                     "invoice_number": inv_num,
                     "counterparty_name": cp.name,
                     "counterparty_short_name": cp.short_name,
+                    "counterparty_contract": cp.contract or None,
                     "bitrix_company_id": cp.bitrix_company_id,
                     "payer_name": cp.name,
                     "payer_inn": cp.inn,
@@ -531,6 +533,7 @@ def main() -> None:
                 bitrix_task_url = create_invoice_task(
                     counterparty_name=prepared["counterparty_name"],
                     counterparty_short_name=prepared["counterparty_short_name"],
+                    counterparty_contract=prepared.get("counterparty_contract"),
                     invoice_number=dry_run_invoice_number,
                     invoice_date=prepared["invoice_date"],
                     bitrix_company_id=prepared["bitrix_company_id"],
@@ -619,6 +622,7 @@ def main() -> None:
                 bitrix_task_url = create_invoice_task(
                     counterparty_name=counterparty_name,
                     counterparty_short_name=prepared["counterparty_short_name"],
+                    counterparty_contract=prepared.get("counterparty_contract"),
                     invoice_number=invoice_number,
                     invoice_date=prepared["invoice_date"],
                     bitrix_company_id=prepared["bitrix_company_id"],
