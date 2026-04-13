@@ -32,6 +32,7 @@ def build_invoice_work_date_window(
     strict_period=True:
     - monthly: с 1-го числа текущего месяца
     - 2weeks: 1-15 или 16-конец месяца
+    - 10days: 1-10, 11-20 или 21-конец месяца
     - daily: только текущий день
     """
     date_to = run_at.date()
@@ -45,6 +46,12 @@ def build_invoice_work_date_window(
         if run_at.day <= 15:
             return date(date_to.year, date_to.month, 1), date_to
         return date(date_to.year, date_to.month, 16), date_to
+    if schedule == "10days":
+        if run_at.day <= 10:
+            return date(date_to.year, date_to.month, 1), date_to
+        if run_at.day <= 20:
+            return date(date_to.year, date_to.month, 11), date_to
+        return date(date_to.year, date_to.month, 21), date_to
 
     # monthly и неизвестные значения — с начала месяца.
     return date(date_to.year, date_to.month, 1), date_to
@@ -68,6 +75,7 @@ def build_invoice_work_date_window_manual(
     strict_period=True:
     - monthly: с 1-го по последний день текущего месяца
     - 2weeks: с 1-го по 15-е или с 16-го по конец месяца
+    - 10days: с 1-го по 10-е, с 11-го по 20-е или с 21-го по конец месяца
     - daily: только текущий день
     """
     if not strict_period:
@@ -83,6 +91,12 @@ def build_invoice_work_date_window_manual(
         if run_at.day <= 15:
             return date(date_to.year, date_to.month, 1), date(date_to.year, date_to.month, 15)
         return date(date_to.year, date_to.month, 16), date(date_to.year, date_to.month, last_day)
+    if schedule == "10days":
+        if run_at.day <= 10:
+            return date(date_to.year, date_to.month, 1), date(date_to.year, date_to.month, 10)
+        if run_at.day <= 20:
+            return date(date_to.year, date_to.month, 11), date(date_to.year, date_to.month, 20)
+        return date(date_to.year, date_to.month, 21), date(date_to.year, date_to.month, last_day)
 
     # monthly и неизвестные значения — весь текущий месяц.
     return date(date_to.year, date_to.month, 1), date(date_to.year, date_to.month, last_day)

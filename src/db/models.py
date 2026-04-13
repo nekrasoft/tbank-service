@@ -40,7 +40,7 @@ class Counterparty(Base):
         String(20),
         nullable=False,
         default="2weeks",
-        comment="Периодичность выставления: monthly, 2weeks, daily",
+        comment="Периодичность выставления: monthly, 2weeks, 10days, daily",
     )
     status = Column(
         String(20),

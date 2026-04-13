@@ -42,6 +42,8 @@ MONTHLY_EVENING_START_HOUR = 19
 BIWEEKLY_MIDMONTH_DAY = 15
 BIWEEKLY_MORNING_START_HOUR = 5
 BIWEEKLY_MORNING_END_HOUR = 9
+TEN_DAYS_FIRST_CUTOFF_DAY = 10
+TEN_DAYS_SECOND_CUTOFF_DAY = 20
 
 
 def _parse_date_arg(value: str) -> date:
@@ -140,8 +142,9 @@ def _is_counterparty_due(invoice_schedule: str | None, run_at: datetime) -> bool
     Проверка, должен ли контрагент выставляться в текущий запуск.
 
     Поддерживаемые значения:
-    - monthly: последний день месяца, после 21:00
-    - 2weeks: последний день месяца или 15 число утром (08:00-11:59)
+    - monthly: последний день месяца, после 19:00
+    - 2weeks: последний день месяца или 15 число утром (05:00-08:59)
+    - 10days: 10-е, 20-е или последний день месяца, после 19:00
     - daily: в любой запуск
     """
     schedule = (invoice_schedule or "monthly").strip().lower()
@@ -158,6 +161,15 @@ def _is_counterparty_due(invoice_schedule: str | None, run_at: datetime) -> bool
         return (
             run_at.day == BIWEEKLY_MIDMONTH_DAY
             and BIWEEKLY_MORNING_START_HOUR <= run_at.hour < BIWEEKLY_MORNING_END_HOUR
+        )
+
+    if schedule == "10days":
+        return (
+            run_at.hour >= MONTHLY_EVENING_START_HOUR
+            and (
+                _is_last_day_of_month(run_at.date())
+                or run_at.day in (TEN_DAYS_FIRST_CUTOFF_DAY, TEN_DAYS_SECOND_CUTOFF_DAY)
+            )
         )
 
     logger.warning(

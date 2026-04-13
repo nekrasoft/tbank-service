@@ -24,7 +24,7 @@ def upgrade() -> None:
             "invoice_schedule",
             sa.String(20),
             nullable=True,
-            comment="Периодичность выставления: monthly, 2weeks, daily",
+            comment="Периодичность выставления: monthly, 2weeks, 10days, daily",
         ),
     )
     op.execute(

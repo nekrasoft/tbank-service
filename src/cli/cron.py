@@ -35,6 +35,8 @@ DEBUG_FORCE_EMAIL = (os.environ.get("DEBUG_FORCE_EMAIL") or "").strip() or None
 # Окна выставления для периодичности.
 RUN_AT_EVENING_START_HOUR = 19
 BIWEEKLY_MIDMONTH_DAY = 15
+TEN_DAYS_FIRST_CUTOFF_DAY = 10
+TEN_DAYS_SECOND_CUTOFF_DAY = 20
 
 def _is_last_day_of_month(target_date: date) -> bool:
     """Проверка: переданная дата — последний день месяца."""
@@ -47,9 +49,10 @@ def _is_counterparty_due(invoice_schedule: str | None, run_at: datetime) -> bool
     Проверка, должен ли контрагент выставляться в текущий запуск.
 
     Поддерживаемые значения:
-    - monthly: последний день месяца, после 22:00
-    - 2weeks: последний день месяца или 15 число, после 22:00
-    - daily: в любой день после 22:00
+    - monthly: последний день месяца, после 19:00
+    - 2weeks: последний день месяца или 15 число, после 19:00
+    - 10days: 10-е, 20-е или последний день месяца, после 19:00
+    - daily: в любой день после 19:00
     """
     schedule = (invoice_schedule or "monthly").strip().lower()
 
@@ -63,6 +66,15 @@ def _is_counterparty_due(invoice_schedule: str | None, run_at: datetime) -> bool
         return (
             run_at.hour >= RUN_AT_EVENING_START_HOUR
             and (_is_last_day_of_month(run_at.date()) or run_at.day == BIWEEKLY_MIDMONTH_DAY)
+        )
+
+    if schedule == "10days":
+        return (
+            run_at.hour >= RUN_AT_EVENING_START_HOUR
+            and (
+                _is_last_day_of_month(run_at.date())
+                or run_at.day in (TEN_DAYS_FIRST_CUTOFF_DAY, TEN_DAYS_SECOND_CUTOFF_DAY)
+            )
         )
 
     logger.warning(
