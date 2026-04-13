@@ -171,8 +171,6 @@ def _build_task_description(
     ]
     if invoice_amount is not None:
         lines.append(f"[B]Сумма[/B]: {_format_money(invoice_amount)}")
-    if tbank_invoice_id:
-        lines.append(f"[B]T-Bank ID[/B]: {tbank_invoice_id}")
     if pdf_url:
         lines.append(f"[B]PDF[/B]: {pdf_url}")
     lines.extend(
