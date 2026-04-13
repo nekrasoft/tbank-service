@@ -172,13 +172,13 @@ def _build_task_description(
     if invoice_amount is not None:
         lines.append(f"[B]Сумма[/B]: {_format_money(invoice_amount)}")
     if pdf_url:
-        lines.append(f"[B]PDF[/B]: {pdf_url}")
+        lines.append(f"[B]PDF[/B]: [URL={pdf_url}]https://business.tbank.ru/document/link[/URL]")
     lines.extend(
         [
             "",
             "[B]Необходимо в ТБанке создать Акт и УПД для данного Счета и отправить все три документа в ЭДО[/B]",
             "",
-            "[B]ВНИМАНИЕ: Для УПД обязательно указать \"Основание передачи\" - детали в приложенном файле.[/B]",
+            "[B]ВНИМАНИЕ:[/B] Для УПД обязательно указать \"Основание передачи\" - детали в приложенном файле.",
         ]
     )
     return "\n".join(lines)
