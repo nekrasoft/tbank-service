@@ -110,14 +110,16 @@ def _comment_unit_and_volume_m3(work: Work) -> tuple[str, float]:
     return "шт", _BUNKER_VOLUME_M3
 
 
-def build_invoice_comment(works: list[Work]) -> str:
+def build_invoice_comment(works: list[Work], contract: str | None = None) -> str:
     """
     Сборка комментария к счёту для T-Bank.
 
     Формат:
+    Договор №111 от 12.03.2025
     Оказаны услуги:
     05.03.2026 Свободы 111А - 3 шт, 10.03.2026 Знак - 4 шт
     """
+    contract_line = (contract or "").strip()
     grouped: dict[tuple[date_type, str, str, str | None], float] = defaultdict(float)
     total_volume = 0.0
     for work in works:
@@ -129,7 +131,8 @@ def build_invoice_comment(works: list[Work]) -> str:
         total_volume += amount * volume_m3
 
     if not grouped:
-        return "Оказаны услуги."
+        body = "Оказаны услуги."
+        return f"{contract_line}\n{body}" if contract_line else body
 
     parts: list[str] = []
     for (work_date, note, unit, _op_type), total in sorted(
@@ -144,7 +147,8 @@ def build_invoice_comment(works: list[Work]) -> str:
             parts.append(f"{date_str} - {amount_str} {unit}")
 
     total_volume_str = _format_amount(total_volume)
-    return "Оказаны услуги:\n" + ", ".join(parts) + f"\nОбщий объем: {total_volume_str} м3"
+    body = "Оказаны услуги:\n" + ", ".join(parts) + f"\nОбщий объем: {total_volume_str} м3"
+    return f"{contract_line}\n{body}" if contract_line else body
 
 
 def build_invoice_items(

@@ -310,7 +310,7 @@ def _prepare_pending_invoices(
                         "bitrix_company_id": cp.bitrix_company_id,
                         "email": group.email if group.email is not None else (cp.email or None),
                         "items": items,
-                        "comment": build_invoice_comment(group.works),
+                        "comment": build_invoice_comment(group.works, contract=cp.contract),
                         "works_count": len(group.works),
                         "date_from": date_from,
                         "date_to": date_to,
@@ -333,7 +333,7 @@ def _prepare_pending_invoices(
                 )
                 return []
 
-            comment = build_invoice_comment(group.works)
+            comment = build_invoice_comment(group.works, contract=cp.contract)
             inv_num = num_repo.get_next_number(session)
             inv = inv_repo.create(
                 session,

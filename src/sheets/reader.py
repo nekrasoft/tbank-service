@@ -166,9 +166,10 @@ def read_counterparties(
     - Email
     - Сокращенное наименование
     - Наименование контрагента
+    - Договор (опционально)
 
     Возвращает список словарей с ключами:
-    inn, kpp, email, short_name, name
+    inn, kpp, email, short_name, name, contract
     """
     schema = _load_schema()
     url = sheet_url or os.environ.get("GOOGLE_SHEET_URL") or schema.get("google_sheet_url")
@@ -194,6 +195,7 @@ def read_counterparties(
         "Email",
         "Сокращенное наименование",
         "Наименование контрагента",
+        "Договор",
     ]
     try:
         records = worksheet.get_all_records(expected_headers=required_headers)
@@ -227,8 +229,9 @@ def read_counterparties(
         email = str(row.get("Email", "") or "").strip()
         short_name = str(row.get("Сокращенное наименование", "") or "").strip()
         name = str(row.get("Наименование контрагента", "") or "").strip()
+        contract = str(row.get("Договор", "") or "").strip()
 
-        if not any([inn, kpp, email, short_name, name]):
+        if not any([inn, kpp, email, short_name, name, contract]):
             continue
 
         counterparties.append(
@@ -238,6 +241,7 @@ def read_counterparties(
                 "email": email,
                 "short_name": short_name,
                 "name": name,
+                "contract": contract,
             }
         )
     return counterparties

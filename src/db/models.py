@@ -36,6 +36,7 @@ class Counterparty(Base):
     phone = Column(String(20), nullable=True)
     bitrix_company_id = Column(Integer, nullable=True, comment="ID компании в Bitrix24 CRM")
     note = Column(String(255), nullable=True, comment="Примечание для матчинга с works")
+    contract = Column(String(255), nullable=True, comment="Строка договора для комментария счёта")
     invoice_schedule = Column(
         String(20),
         nullable=False,
