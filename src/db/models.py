@@ -7,6 +7,7 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
+    Boolean,
     Column,
     Date,
     DateTime,
@@ -118,6 +119,8 @@ class Invoice(Base):
     issued_at = Column(DateTime, nullable=False)
     due_date = Column(Date, nullable=True)
     status = Column(String(50), nullable=True, default="issued")
+    paid_amount = Column(Numeric(14, 2), nullable=False, default=Decimal("0.00"))
+    paid_at = Column(DateTime, nullable=True)
     pdf_url = Column(String(500), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -136,6 +139,67 @@ class InvoiceItem(Base):
     amount = Column(Numeric(12, 2), nullable=False)
     unit = Column(String(50), nullable=False, default="шт")
     vat = Column(String(10), nullable=True, default="None")
+
+
+class TBankStatementOperation(Base):
+    """Операция из выписки T-Bank (raw + нормализованные поля + результат матчинга)."""
+    __tablename__ = "tbank_statement_operations"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    account_number = Column(String(32), nullable=False, index=True)
+    dedupe_key = Column(String(191), nullable=False, unique=True)
+    operation_id = Column(String(128), nullable=False, index=True)
+    operation_status = Column(String(32), nullable=True)
+    type_of_operation = Column(String(32), nullable=True)
+    category = Column(String(64), nullable=True)
+    operation_date = Column(DateTime, nullable=True, index=True)
+    trxn_post_date = Column(DateTime, nullable=True)
+    authorization_date = Column(DateTime, nullable=True)
+    draw_date = Column(DateTime, nullable=True)
+    charge_date = Column(DateTime, nullable=True)
+    doc_date = Column(DateTime, nullable=True)
+    document_number = Column(String(64), nullable=True)
+    operation_amount = Column(Numeric(14, 2), nullable=True)
+    account_amount = Column(Numeric(14, 2), nullable=True)
+    ruble_amount = Column(Numeric(14, 2), nullable=True)
+    description = Column(Text, nullable=True)
+    pay_purpose = Column(Text, nullable=True)
+    payer_name = Column(String(255), nullable=True)
+    payer_inn = Column(String(12), nullable=True, index=True)
+    payer_account = Column(String(32), nullable=True)
+    receiver_name = Column(String(255), nullable=True)
+    receiver_inn = Column(String(12), nullable=True, index=True)
+    receiver_account = Column(String(32), nullable=True)
+    counterparty_name = Column(String(255), nullable=True)
+    counterparty_inn = Column(String(12), nullable=True)
+    counterparty_account = Column(String(32), nullable=True)
+    is_incoming = Column(Boolean, nullable=False, default=False)
+    matched_invoice_id = Column(Integer, ForeignKey("invoices.id", ondelete="SET NULL"), nullable=True)
+    match_confidence = Column(Numeric(5, 4), nullable=True)
+    match_method = Column(String(64), nullable=True)
+    matched_at = Column(DateTime, nullable=True)
+    raw_payload = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    matched_invoice = relationship("Invoice", backref="statement_operations")
+    __table_args__ = (
+        Index("ix_tbank_statement_ops_unmatched", "matched_invoice_id", "is_incoming"),
+        Index("ix_tbank_statement_ops_account_operation_date", "account_number", "operation_date"),
+    )
+
+
+class TBankStatementSyncState(Base):
+    """Состояние синка выписки по каждому счёту."""
+    __tablename__ = "tbank_statement_sync_state"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    account_number = Column(String(32), nullable=False, unique=True, index=True)
+    last_from = Column(DateTime, nullable=True)
+    last_to = Column(DateTime, nullable=True)
+    last_success_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class InvoiceNumberSeq(Base):

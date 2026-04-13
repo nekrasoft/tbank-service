@@ -11,6 +11,7 @@
 - Создание сделки и задачи в Bitrix24 после выставления счёта (cron/manual)
 - Разбиение одного контрагента на несколько счетов по правилам из `config/invoice_split_rules.json`
 - Cron: автоматическое выставление в последний день месяца
+- Отдельный cron: синк выписки T-Bank и автозачет оплат по выставленным счетам
 - Ручное выставление счёта по запросу
 - Импорт контрагентов в Bitrix24 CRM
 
@@ -64,8 +65,41 @@ python3 -m src.cli.manual --counterparty "Алтай-Строй" --dry-run --dry
 # Cron (последний день месяца)
 python3 -m src.cli.cron
 
+# Cron оплаты: синк выписки и матчинг оплат к invoices
+python3 -m src.cli.cron_payments
+
 # Импорт контрагентов в Bitrix24 CRM
 python3 -m src.cli.import_counterparties_to_bitrix24
+```
+
+## Автозачет Оплат Из Выписки T-Bank
+
+- Команда: `python3 -m src.cli.cron_payments`.
+- Источник данных: `GET /api/v1/statement` (с пагинацией `nextCursor`).
+- Синк идемпотентный:
+  - каждая операция сохраняется в `tbank_statement_operations` (нормализованные поля + `raw_payload`);
+  - дедупликация по `dedupe_key` (`account_number + operationId`, либо fallback hash).
+- Для каждого счета в `TBANK_STATEMENT_ACCOUNT_NUMBERS` хранится состояние синка в `tbank_statement_sync_state`.
+- Для счетов в `invoices` добавлены агрегаты оплаты:
+  - `paid_amount` — суммарно зачтенные входящие платежи;
+  - `paid_at` — дата закрытия счета (когда сумма достигла total).
+- Автоматический матчинг выполняется по приоритетам:
+  - номер счета в `payPurpose/description` (самый надежный путь);
+  - `payer.inn + сумма` (если кандидат уникальный);
+  - `payer.name + сумма` (осторожный fallback при уникальном кандидате).
+- Статусы счетов после пересчета:
+  - `issued` — оплат нет;
+  - `partially_paid` — оплачено частично;
+  - `paid` — оплачено полностью (или с переплатой).
+
+Минимум env для cron оплат:
+
+```env
+TBANK_STATEMENT_ACCOUNT_NUMBERS=4070...,4080...
+TBANK_STATEMENT_INITIAL_LOOKBACK_DAYS=90
+TBANK_STATEMENT_OVERLAP_MINUTES=180
+TBANK_STATEMENT_PAGE_LIMIT=200
+TBANK_STATEMENT_UNMATCHED_LIMIT=5000
 ```
 
 ## Импорт Контрагентов В Bitrix24
@@ -245,4 +279,4 @@ BITRIX24_DEAL_WEBHOOK_URL=https://<portal>.bitrix24.ru/rest/<user_id>/<code>
 - `src/bitrix/` — клиент Bitrix24 CRM
 - `src/invoice/` — сборка счёта, генерация акта
 - `src/notifications/` — отправка в Telegram и MAX
-- `src/cli/` — точки входа (`cron`, `manual`, `sync_sheets`, `import_counterparties_to_bitrix24`)
+- `src/cli/` — точки входа (`cron`, `cron_payments`, `manual`, `sync_sheets`, `import_counterparties_to_bitrix24`)

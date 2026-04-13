@@ -8,7 +8,7 @@ import logging
 import os
 import re
 import uuid
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Any
 
 import httpx
@@ -63,6 +63,13 @@ def _get_token() -> str:
     if not token:
         raise ValueError("Задайте TBANK_TOKEN в .env")
     return token
+
+
+def _format_utc_datetime(dt: datetime) -> str:
+    """Приведение datetime к RFC3339 UTC формату для query-параметров выписки."""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def send_invoice(
@@ -199,5 +206,61 @@ def get_invoice_info(invoice_id: str) -> dict[str, Any]:
 
     with httpx.Client(timeout=15.0) as client:
         resp = client.get(url, headers=headers)
+        resp.raise_for_status()
+        return resp.json()
+
+
+def get_statement(
+    *,
+    account_number: str,
+    from_dt: datetime,
+    to_dt: datetime,
+    cursor: str | None = None,
+    limit: int = 200,
+    operation_status: str | None = "Transaction",
+    operation_type: str | None = None,
+    with_balances: bool = False,
+) -> dict[str, Any]:
+    """
+    Получение выписки по счету через GET /api/v1/statement.
+
+    :param account_number: Расчетный счет, по которому читаем выписку
+    :param from_dt: Левая граница периода (UTC)
+    :param to_dt: Правая граница периода (UTC)
+    :param cursor: Курсор пагинации (nextCursor из предыдущего ответа)
+    :param limit: Размер страницы (макс. 200)
+    :param operation_status: Фильтр статуса операции (обычно Transaction)
+    :param operation_type: Фильтр типа операции (если нужен)
+    :param with_balances: Возвращать balances (опционально)
+    :return: JSON ответа API
+    """
+    url = f"{_get_base_url()}/statement"
+    headers = {
+        "Authorization": f"Bearer {_get_token()}",
+        "X-Request-Id": str(uuid.uuid4()),
+    }
+    params: dict[str, Any] = {
+        "accountNumber": account_number,
+        "from": _format_utc_datetime(from_dt),
+        "to": _format_utc_datetime(to_dt),
+        "limit": max(1, min(int(limit), 200)),
+        "withBalances": "true" if with_balances else "false",
+    }
+    if cursor:
+        params["cursor"] = cursor
+    if operation_status:
+        params["operationStatus"] = operation_status
+    if operation_type:
+        params["operationType"] = operation_type
+
+    with httpx.Client(timeout=30.0) as client:
+        resp = client.get(url, params=params, headers=headers)
+        if resp.is_error:
+            logger.error(
+                "T-Bank: ошибка получения выписки, account=%s status=%s body=%s",
+                account_number,
+                resp.status_code,
+                resp.text[:2000],
+            )
         resp.raise_for_status()
         return resp.json()

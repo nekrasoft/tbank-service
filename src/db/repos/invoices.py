@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from decimal import Decimal
 
 from sqlalchemy import select, update
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from src.db.models import Invoice, InvoiceItem
 
@@ -27,6 +28,8 @@ def create(
         issued_at=datetime.utcnow(),
         due_date=due_date,
         status=status,
+        paid_amount=Decimal("0.00"),
+        paid_at=None,
         pdf_url=pdf_url,
     )
     session.add(inv)
@@ -102,5 +105,53 @@ def mark_as_failed(session: Session, *, invoice_id: int) -> int:
         update(Invoice)
         .where(Invoice.id == invoice_id)
         .values(status="failed_send")
+    )
+    return result.rowcount or 0
+
+
+def get_open_for_payment_matching(session: Session) -> list[Invoice]:
+    """
+    Счета-кандидаты для матчинга входящих платежей.
+
+    Берём только счета, реально отправленные в T-Bank и еще не закрытые полностью.
+    """
+    result = session.execute(
+        select(Invoice)
+        .where(Invoice.status.in_(("issued", "partially_paid")))
+        .options(joinedload(Invoice.counterparty), selectinload(Invoice.items))
+        .order_by(Invoice.issued_at.asc(), Invoice.id.asc())
+    )
+    return list(result.scalars().all())
+
+
+def get_for_payment_recalc(session: Session, invoice_ids: list[int]) -> list[Invoice]:
+    """Получение счетов для пересчета статуса оплаты."""
+    if not invoice_ids:
+        return []
+    result = session.execute(
+        select(Invoice)
+        .where(Invoice.id.in_(invoice_ids))
+        .options(selectinload(Invoice.items))
+    )
+    return list(result.scalars().all())
+
+
+def update_payment_state(
+    session: Session,
+    *,
+    invoice_id: int,
+    status: str,
+    paid_amount: Decimal,
+    paid_at: datetime | None,
+) -> int:
+    """Обновление статуса и агрегированных полей оплаты счета."""
+    result = session.execute(
+        update(Invoice)
+        .where(Invoice.id == invoice_id)
+        .values(
+            status=status,
+            paid_amount=paid_amount,
+            paid_at=paid_at,
+        )
     )
     return result.rowcount or 0
