@@ -172,7 +172,7 @@ def _build_task_description(
     if invoice_amount is not None:
         lines.append(f"[B]Сумма[/B]: {_format_money(invoice_amount)}")
     if pdf_url:
-        lines.append(f"[B]PDF[/B]: [URL={pdf_url}]https://business.tbank.ru/document/link[/URL]")
+        lines.append(f"[B]PDF[/B]: [URL={pdf_url}]Документ[/URL]")
     lines.extend(
         [
             "",
