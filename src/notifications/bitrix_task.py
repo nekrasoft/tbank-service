@@ -22,6 +22,7 @@ _TASK_AUDITORS = [8, 54, 18, 33036]
 _TASK_TAGS = ["киров", "новый_счет", "отправить в ЭДО"]
 _TASK_PRIORITY = 2
 _TASK_REQUIRE_RESULT = True
+_TASK_WEBDAV_FILE_IDS = [1095778]
 _DEAL_STAGE_ID = "C102:FINAL_INVOICE"
 _DEAL_TYPE_ID = "SALE"
 _DEAL_SOURCE_ID = "PARTNER"
@@ -130,6 +131,7 @@ def create_invoice_task(
             priority=_TASK_PRIORITY,
             description_in_bbcode=True,
             require_result=_TASK_REQUIRE_RESULT,
+            webdav_file_ids=_TASK_WEBDAV_FILE_IDS,
         )
         task_url = _build_task_url(task_id)
         if task_url:

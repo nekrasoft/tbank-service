@@ -548,6 +548,7 @@ def add_task(
     priority: int | None = None,
     description_in_bbcode: bool = False,
     require_result: bool = False,
+    webdav_file_ids: list[int | str] | None = None,
 ) -> int:
     """
     Создаёт задачу в Bitrix24 методом tasks.task.add.
@@ -623,6 +624,26 @@ def add_task(
                 "CODE": 3,
             },
         ]
+
+    webdav_files_norm: list[str] = []
+    seen_webdav_files: set[str] = set()
+    for raw_file_id in webdav_file_ids or []:
+        raw_value = str(raw_file_id).strip()
+        if not raw_value:
+            continue
+        num_part = raw_value[1:] if raw_value.lower().startswith("n") else raw_value
+        if not num_part.isdigit():
+            continue
+        file_id_int = int(num_part)
+        if file_id_int <= 0:
+            continue
+        token = f"n{file_id_int}"
+        if token in seen_webdav_files:
+            continue
+        seen_webdav_files.add(token)
+        webdav_files_norm.append(token)
+    if webdav_files_norm:
+        fields["UF_TASK_WEBDAV_FILES"] = webdav_files_norm
 
     data = _call_method(
         "tasks.task.add",
