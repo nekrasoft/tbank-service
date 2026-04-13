@@ -83,6 +83,8 @@ def mark_as_issued(
     invoice_id: int,
     tbank_invoice_id: str | None,
     pdf_url: str | None = None,
+    bitrix_task_id: int | None = None,
+    bitrix_deal_id: int | None = None,
 ) -> int:
     """Пометка счёта как успешно отправленного в T-Bank."""
     values = {
@@ -91,6 +93,34 @@ def mark_as_issued(
     }
     if pdf_url is not None:
         values["pdf_url"] = pdf_url
+    if bitrix_task_id is not None:
+        values["bitrix_task_id"] = bitrix_task_id
+    if bitrix_deal_id is not None:
+        values["bitrix_deal_id"] = bitrix_deal_id
+    result = session.execute(
+        update(Invoice)
+        .where(Invoice.id == invoice_id)
+        .values(**values)
+    )
+    return result.rowcount or 0
+
+
+def update_bitrix_links(
+    session: Session,
+    *,
+    invoice_id: int,
+    bitrix_task_id: int | None = None,
+    bitrix_deal_id: int | None = None,
+) -> int:
+    """Сохраняет в счёте связки c задачей/сделкой Bitrix24."""
+    values: dict[str, int] = {}
+    if bitrix_task_id is not None:
+        values["bitrix_task_id"] = int(bitrix_task_id)
+    if bitrix_deal_id is not None:
+        values["bitrix_deal_id"] = int(bitrix_deal_id)
+    if not values:
+        return 0
+
     result = session.execute(
         update(Invoice)
         .where(Invoice.id == invoice_id)

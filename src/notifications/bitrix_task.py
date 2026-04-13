@@ -3,6 +3,7 @@
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
 import logging
 import os
@@ -10,7 +11,13 @@ from datetime import date, datetime, timedelta
 from typing import Any
 from urllib.parse import urlsplit
 
-from src.bitrix.client import add_deal, add_task, set_deal_product_rows
+from src.bitrix.client import (
+    add_deal,
+    add_task,
+    add_task_comment,
+    set_deal_product_rows,
+    update_deal,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +31,7 @@ _TASK_PRIORITY = 2
 _TASK_REQUIRE_RESULT = True
 _TASK_WEBDAV_FILE_IDS = [1095778]
 _DEAL_STAGE_ID = "C102:FINAL_INVOICE"
+_DEAL_WON_STAGE_ID = "C102:WON"
 _DEAL_TYPE_ID = "SALE"
 _DEAL_SOURCE_ID = "PARTNER"
 _DEAL_SERVICE_FIELD = "UF_CRM_1640764372166"
@@ -46,8 +54,18 @@ _DEAL_DIRECTION_FIELD = "UF_CRM_1680515310897"
 _DEAL_DIRECTION_VALUE = 4818
 _DEAL_ADDRESS = "Киров"
 _DEAL_DEFAULT_PRODUCT_NAME = "Услуга по вывозу мусора из контейнера 8 м3"
+_TASK_PAYMENT_COMMENT_TEXT = "Оплата поступила"
 _task_webhook_missing_logged = False
 _deal_webhook_missing_logged = False
+
+
+@dataclass(frozen=True)
+class BitrixInvoiceTaskResult:
+    """Результат создания связки сделка+задача в Bitrix24 по счёту."""
+
+    task_id: int | None
+    task_url: str | None
+    deal_id: int | None
 
 
 def _is_task_webhook_configured() -> bool:
@@ -89,6 +107,39 @@ def create_invoice_task(
     log_deal_request_payload: bool = False,
 ) -> str | None:
     """Создаёт задачу в Bitrix24 по факту выставления счёта."""
+    result = create_invoice_task_with_meta(
+        counterparty_name=counterparty_name,
+        counterparty_short_name=counterparty_short_name,
+        counterparty_contract=counterparty_contract,
+        invoice_number=invoice_number,
+        invoice_date=invoice_date,
+        bitrix_company_id=bitrix_company_id,
+        tbank_invoice_id=tbank_invoice_id,
+        invoice_link=invoice_link,
+        pdf_url=pdf_url,
+        invoice_items=invoice_items,
+        log_deal_request_payload=log_deal_request_payload,
+    )
+    if not result:
+        return None
+    return result.task_url
+
+
+def create_invoice_task_with_meta(
+    *,
+    counterparty_name: str,
+    counterparty_short_name: str | None = None,
+    counterparty_contract: str | None = None,
+    invoice_number: str,
+    invoice_date: date | datetime | None = None,
+    bitrix_company_id: int | None = None,
+    tbank_invoice_id: str | None = None,
+    invoice_link: str | None = None,
+    pdf_url: str | None = None,
+    invoice_items: list[dict[str, Any]] | None = None,
+    log_deal_request_payload: bool = False,
+) -> BitrixInvoiceTaskResult | None:
+    """Создаёт задачу/сделку в Bitrix24 и возвращает их ID/URL."""
     if not _is_task_webhook_configured():
         return None
 
@@ -122,6 +173,8 @@ def create_invoice_task(
             logger.error("Bitrix24 deal: ошибка создания сделки по счёту %s — %s", invoice_number, e)
 
     crm_bindings = _build_task_crm_bindings(bitrix_company_id, deal_id)
+    task_id: int | None = None
+    task_url: str | None = None
 
     try:
         task_id = add_task(
@@ -147,10 +200,105 @@ def create_invoice_task(
             )
         else:
             logger.info("Bitrix24 task: создана задача id=%s по счёту %s", task_id, invoice_number)
-        return task_url
     except Exception as e:
         logger.error("Bitrix24 task: ошибка создания задачи по счёту %s — %s", invoice_number, e)
+
+    if task_id is None and deal_id is None:
         return None
+
+    return BitrixInvoiceTaskResult(
+        task_id=task_id,
+        task_url=task_url,
+        deal_id=deal_id,
+    )
+
+
+def mark_invoice_paid_in_bitrix(
+    *,
+    invoice_number: str,
+    bitrix_task_id: int | None,
+    bitrix_deal_id: int | None,
+) -> None:
+    """Пишет комментарий в задачу и переводит связанную сделку в WON."""
+    task_id = _normalize_positive_int(bitrix_task_id)
+    if task_id is not None:
+        if _is_task_webhook_configured():
+            try:
+                comment_id = add_task_comment(
+                    task_id=task_id,
+                    message=_TASK_PAYMENT_COMMENT_TEXT,
+                    webhook_env_var=_TASK_WEBHOOK_ENV,
+                )
+                logger.info(
+                    "Bitrix24 task: добавлен комментарий id=%s в задачу %s по счёту %s",
+                    comment_id,
+                    task_id,
+                    invoice_number,
+                )
+            except Exception as e:
+                logger.error(
+                    "Bitrix24 task: ошибка добавления комментария в задачу %s по счёту %s — %s",
+                    task_id,
+                    invoice_number,
+                    e,
+                )
+        else:
+            logger.info(
+                "Bitrix24 task: webhook не настроен, комментарий по оплате не отправлен "
+                "(счёт %s, task_id=%s)",
+                invoice_number,
+                task_id,
+            )
+    else:
+        logger.info(
+            "Bitrix24 task: task_id не задан, пропускаем комментарий по оплате (счёт %s)",
+            invoice_number,
+        )
+
+    deal_id = _normalize_positive_int(bitrix_deal_id)
+    if deal_id is None:
+        logger.info(
+            "Bitrix24 deal: deal_id не задан, пропускаем перевод в WON (счёт %s)",
+            invoice_number,
+        )
+        return
+
+    if not _is_deal_webhook_configured():
+        logger.info(
+            "Bitrix24 deal: webhook не настроен, перевод в WON не выполнен "
+            "(счёт %s, deal_id=%s)",
+            invoice_number,
+            deal_id,
+        )
+        return
+
+    try:
+        is_updated = update_deal(
+            deal_id=deal_id,
+            fields={"STAGE_ID": _DEAL_WON_STAGE_ID},
+            webhook_env_var=_DEAL_WEBHOOK_ENV,
+        )
+        if is_updated:
+            logger.info(
+                "Bitrix24 deal: сделка %s переведена в %s по счёту %s",
+                deal_id,
+                _DEAL_WON_STAGE_ID,
+                invoice_number,
+            )
+        else:
+            logger.warning(
+                "Bitrix24 deal: crm.deal.update вернул false для сделки %s по счёту %s",
+                deal_id,
+                invoice_number,
+            )
+    except Exception as e:
+        logger.error(
+            "Bitrix24 deal: ошибка перевода сделки %s в %s по счёту %s — %s",
+            deal_id,
+            _DEAL_WON_STAGE_ID,
+            invoice_number,
+            e,
+        )
 
 
 def _build_task_description(

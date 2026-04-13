@@ -122,6 +122,8 @@ class Invoice(Base):
     paid_amount = Column(Numeric(14, 2), nullable=False, default=Decimal("0.00"))
     paid_at = Column(DateTime, nullable=True)
     pdf_url = Column(String(500), nullable=True)
+    bitrix_task_id = Column(Integer, nullable=True, comment="ID задачи в Bitrix24")
+    bitrix_deal_id = Column(Integer, nullable=True, comment="ID сделки в Bitrix24")
     created_at = Column(DateTime, default=datetime.utcnow)
 
     counterparty = relationship("Counterparty", backref="invoices")

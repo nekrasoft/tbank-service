@@ -464,12 +464,12 @@ def _recalculate_payment_state(
     session: Any,
     *,
     invoice_ids: set[int],
-) -> dict[str, int]:
+) -> tuple[dict[str, int], list[dict[str, Any]]]:
     from src.db.repos import invoices as inv_repo
     from src.db.repos import statement_operations as st_ops_repo
 
     if not invoice_ids:
-        return {"paid": 0, "partially_paid": 0, "issued": 0, "updated": 0}
+        return {"paid": 0, "partially_paid": 0, "issued": 0, "updated": 0}, []
 
     invoice_list = inv_repo.get_for_payment_recalc(session, sorted(invoice_ids))
     matched = st_ops_repo.get_matched_incoming_for_invoices(session, invoice_ids=sorted(invoice_ids))
@@ -488,9 +488,11 @@ def _recalculate_payment_state(
             paid_at[inv_id] = payment_dt
 
     stats = {"paid": 0, "partially_paid": 0, "issued": 0, "updated": 0}
+    newly_paid: list[dict[str, Any]] = []
     for invoice in invoice_list:
         total = _invoice_total(invoice)
         paid = paid_sum.get(invoice.id, Decimal("0.00")).quantize(_MONEY_Q, rounding=ROUND_HALF_UP)
+        prev_status = str(invoice.status or "").strip()
 
         if paid <= _AMOUNT_TOLERANCE:
             new_status = "issued"
@@ -522,9 +524,43 @@ def _recalculate_payment_state(
         )
         if updated:
             stats["updated"] += 1
+            if new_status == "paid" and prev_status != "paid":
+                newly_paid.append(
+                    {
+                        "invoice_id": invoice.id,
+                        "invoice_number": invoice.invoice_number,
+                        "bitrix_task_id": invoice.bitrix_task_id,
+                        "bitrix_deal_id": invoice.bitrix_deal_id,
+                    }
+                )
 
-    return stats
+    return stats, newly_paid
 
+
+def _sync_paid_invoices_to_bitrix(newly_paid: list[dict[str, Any]]) -> None:
+    """Для новых paid-счетов пишет комментарий в задачу и закрывает сделку в Bitrix24."""
+    if not newly_paid:
+        return
+
+    try:
+        from src.notifications.bitrix_task import mark_invoice_paid_in_bitrix
+    except Exception:
+        logger.exception("Не удалось загрузить Bitrix24 payment-notifier")
+        return
+
+    for item in newly_paid:
+        invoice_number = str(item.get("invoice_number") or "").strip() or str(item.get("invoice_id"))
+        try:
+            mark_invoice_paid_in_bitrix(
+                invoice_number=invoice_number,
+                bitrix_task_id=item.get("bitrix_task_id"),
+                bitrix_deal_id=item.get("bitrix_deal_id"),
+            )
+        except Exception:
+            logger.exception(
+                "Ошибка синхронизации оплаты счёта %s в Bitrix24",
+                invoice_number,
+            )
 
 
 def _sync_statement_for_account(
@@ -708,8 +744,9 @@ def _run_matching(unmatched_limit: int) -> tuple[int, dict[str, int]]:
             matched_count += 1
 
         if matched_count:
-            recalc_stats = _recalculate_payment_state(session, invoice_ids=touched_invoice_ids)
+            recalc_stats, newly_paid = _recalculate_payment_state(session, invoice_ids=touched_invoice_ids)
             session.commit()
+            _sync_paid_invoices_to_bitrix(newly_paid)
             return matched_count, recalc_stats
 
         session.rollback()

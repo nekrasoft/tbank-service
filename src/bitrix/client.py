@@ -486,6 +486,47 @@ def add_deal(
     raise RuntimeError(f"Неожиданный ответ Bitrix24 crm.deal.add: {data}")
 
 
+def update_deal(
+    *,
+    deal_id: int,
+    fields: dict[str, Any],
+    webhook_env_var: str = "BITRIX24_DEAL_WEBHOOK_URL",
+    log_request_payload: bool = False,
+) -> bool:
+    """Обновляет сделку в Bitrix24 CRM методом crm.deal.update."""
+    normalized_fields: dict[str, Any] = {}
+    for field_name, value in (fields or {}).items():
+        key = str(field_name).strip()
+        if not key:
+            continue
+        value_norm = (value or "").strip() if isinstance(value, str) else value
+        if value_norm in (None, ""):
+            continue
+        normalized_fields[key] = value_norm
+
+    if not normalized_fields:
+        return True
+
+    payload = {
+        "id": int(deal_id),
+        "fields": normalized_fields,
+        "params": {
+            "REGISTER_SONET_EVENT": "N",
+        },
+    }
+    if log_request_payload:
+        _log_method_payload("crm.deal.update", payload)
+    data = _call_method("crm.deal.update", payload, webhook_env_var=webhook_env_var)
+    result = data.get("result")
+    if isinstance(result, bool):
+        return result
+    if isinstance(result, int):
+        return result != 0
+    if isinstance(result, str):
+        return result.strip().lower() in ("1", "y", "yes", "true")
+    raise RuntimeError(f"Неожиданный ответ Bitrix24 crm.deal.update: {data}")
+
+
 def set_deal_product_rows(
     *,
     deal_id: int,
@@ -669,3 +710,39 @@ def add_task(
         if isinstance(task_id, str) and task_id.isdigit():
             return int(task_id)
     raise RuntimeError(f"Неожиданный ответ Bitrix24 tasks.task.add: {data}")
+
+
+def add_task_comment(
+    *,
+    task_id: int,
+    message: str,
+    webhook_env_var: str = "BITRIX24_TASK_WEBHOOK_URL",
+    log_request_payload: bool = False,
+) -> int:
+    """Добавляет комментарий к задаче Bitrix24 методом task.commentitem.add."""
+    comment_text = str(message or "").strip()
+    if not comment_text:
+        raise ValueError("message не должен быть пустым")
+
+    payload = {
+        "TASKID": int(task_id),
+        "FIELDS": {
+            "POST_MESSAGE": comment_text,
+        },
+    }
+    if log_request_payload:
+        _log_method_payload("task.commentitem.add", payload)
+
+    data = _call_method("task.commentitem.add", payload, webhook_env_var=webhook_env_var)
+    result = data.get("result")
+    if isinstance(result, int):
+        return result
+    if isinstance(result, str) and result.isdigit():
+        return int(result)
+    if isinstance(result, dict):
+        comment_id = result.get("ID") or result.get("id")
+        if isinstance(comment_id, int):
+            return comment_id
+        if isinstance(comment_id, str) and comment_id.isdigit():
+            return int(comment_id)
+    raise RuntimeError(f"Неожиданный ответ Bitrix24 task.commentitem.add: {data}")

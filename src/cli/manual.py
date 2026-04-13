@@ -426,6 +426,37 @@ def _mark_invoice_issued(
         session.close()
 
 
+def _save_invoice_bitrix_links(
+    *,
+    invoice_id: int,
+    bitrix_task_id: int | None = None,
+    bitrix_deal_id: int | None = None,
+) -> None:
+    """Сохраняет связки счёта с задачей/сделкой Bitrix24."""
+    from src.db.connection import get_session
+    from src.db.repos import invoices as inv_repo
+
+    if bitrix_task_id is None and bitrix_deal_id is None:
+        return
+
+    session = get_session()
+    try:
+        updated = inv_repo.update_bitrix_links(
+            session,
+            invoice_id=invoice_id,
+            bitrix_task_id=bitrix_task_id,
+            bitrix_deal_id=bitrix_deal_id,
+        )
+        if updated != 1:
+            raise RuntimeError(f"Invoice id={invoice_id} не найден для update_bitrix_links")
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
 def _mark_invoice_failed(*, invoice_id: int) -> None:
     """Фиксация неуспешной отправки счёта в T-Bank."""
     from src.db.connection import get_session
@@ -518,7 +549,7 @@ def main() -> None:
         if not args.dry_run_bitrix:
             return
 
-        from src.notifications.bitrix_task import create_invoice_task
+        from src.notifications.bitrix_task import create_invoice_task_with_meta
 
         dry_run_base = _build_dry_run_invoice_number()
         for idx, prepared in enumerate(prepared_invoices, start=1):
@@ -530,7 +561,7 @@ def main() -> None:
                 dry_run_invoice_number,
             )
             try:
-                bitrix_task_url = create_invoice_task(
+                bitrix_result = create_invoice_task_with_meta(
                     counterparty_name=prepared["counterparty_name"],
                     counterparty_short_name=prepared["counterparty_short_name"],
                     counterparty_contract=prepared.get("counterparty_contract"),
@@ -540,6 +571,7 @@ def main() -> None:
                     invoice_items=prepared["items"],
                     log_deal_request_payload=True,
                 )
+                bitrix_task_url = bitrix_result.task_url if bitrix_result else None
                 if bitrix_task_url:
                     logger.info("DRY-RUN Bitrix-only: задача создана, url=%s", bitrix_task_url)
                 else:
@@ -552,7 +584,7 @@ def main() -> None:
                 sys.exit(1)
         return
 
-    from src.notifications.bitrix_task import create_invoice_task
+    from src.notifications.bitrix_task import create_invoice_task_with_meta
     from src.notifications.max import send_invoice_notification as send_max_notification
     from src.notifications.telegram import send_invoice_notification_bytes
     from src.sheets.writer import mark_document_in_sheet
@@ -619,7 +651,7 @@ def main() -> None:
                 logger.exception("Ошибка Telegram-уведомления по счёту %s", invoice_number)
             bitrix_task_url: str | None = None
             try:
-                bitrix_task_url = create_invoice_task(
+                bitrix_result = create_invoice_task_with_meta(
                     counterparty_name=counterparty_name,
                     counterparty_short_name=prepared["counterparty_short_name"],
                     counterparty_contract=prepared.get("counterparty_contract"),
@@ -631,6 +663,19 @@ def main() -> None:
                     pdf_url=str(pdf_url) if pdf_url else None,
                     invoice_items=prepared["items"],
                 )
+                if bitrix_result:
+                    bitrix_task_url = bitrix_result.task_url
+                    try:
+                        _save_invoice_bitrix_links(
+                            invoice_id=invoice_id,
+                            bitrix_task_id=bitrix_result.task_id,
+                            bitrix_deal_id=bitrix_result.deal_id,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Ошибка сохранения связки Bitrix24 по счёту %s",
+                            invoice_number,
+                        )
             except Exception:
                 logger.exception("Ошибка создания задачи Bitrix24 по счёту %s", invoice_number)
             try:
