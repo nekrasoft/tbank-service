@@ -16,6 +16,22 @@ def env_bool(name: str, default: bool) -> bool:
     return raw.strip().lower() in ("1", "true", "yes", "y", "on")
 
 
+def add_business_days(start_date: date, business_days: int) -> date:
+    """Добавляет к дате N рабочих дней (пн-пт), исключая стартовый день."""
+    if business_days < 0:
+        raise ValueError("business_days не может быть отрицательным")
+    if business_days == 0:
+        return start_date
+
+    current = start_date
+    added = 0
+    while added < business_days:
+        current = current.fromordinal(current.toordinal() + 1)
+        if current.weekday() < 5:  # 0..4 = пн..пт
+            added += 1
+    return current
+
+
 def build_invoice_work_date_window(
     *,
     invoice_schedule: str | None,

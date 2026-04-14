@@ -16,7 +16,7 @@ import logging
 import os
 import sys
 import time
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 from typing import Any
@@ -196,7 +196,7 @@ def _prepare_pending_invoices(
     from src.db.repos import works as works_repo
     from src.invoice.builder import build_invoice_comment, build_invoice_items
     from src.invoice.splitter import split_works_for_counterparty
-    from src.invoice.window import build_invoice_work_date_window_manual, env_bool
+    from src.invoice.window import add_business_days, build_invoice_work_date_window_manual, env_bool
 
     session = get_session()
     try:
@@ -336,7 +336,7 @@ def _prepare_pending_invoices(
             return prepared_preview
 
         today = date.today()
-        due_date = today + timedelta(days=14)
+        due_date = add_business_days(today, 5)
         prepared_invoices: list[dict[str, Any]] = []
         for group in work_groups:
             items = build_invoice_items(session, group.works, cp.id)
