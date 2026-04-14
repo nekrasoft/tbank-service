@@ -116,7 +116,7 @@ def build_invoice_comment(works: list[Work], contract: str | None = None) -> str
 
     Формат:
     Договор №111 от 12.03.2025
-    Оказаны услуги:
+    Оказаны услуги за период 05.03.2026 - 10.03.2026:
     05.03.2026 Свободы 111А - 3 шт, 10.03.2026 Знак - 4 шт
     """
     contract_line = (contract or "").strip()
@@ -146,8 +146,17 @@ def build_invoice_comment(works: list[Work], contract: str | None = None) -> str
         else:
             parts.append(f"{date_str} - {amount_str} {unit}")
 
+    work_dates = [key[0] for key in grouped]
+    period_start = min(work_dates)
+    period_end = max(work_dates)
+    period_text = f"{period_start.strftime('%d.%m.%Y')} - {period_end.strftime('%d.%m.%Y')}"
+
     total_volume_str = _format_amount(total_volume)
-    body = "Оказаны услуги:\n" + ", ".join(parts) + f"\nОбщий объем: {total_volume_str} м3"
+    body = (
+        f"Оказаны услуги за период {period_text}:\n"
+        + ", ".join(parts)
+        + f"\nОбщий объем: {total_volume_str} м3"
+    )
     return f"{contract_line}\n{body}" if contract_line else body
 
 
