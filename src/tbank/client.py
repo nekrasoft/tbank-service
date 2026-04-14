@@ -114,6 +114,13 @@ def send_invoice(
     due_str = due_date.strftime("%Y-%m-%d")
     inv_date = invoice_date or date.today()
     inv_date_str = inv_date.strftime("%Y-%m-%d")
+    normalized_emails = _normalize_emails(email)
+    email_log = ", ".join(normalized_emails) if normalized_emails else "(не задан)"
+    logger.info(
+        "T-Bank: подготовка счёта %s к отправке, email=%s",
+        invoice_number,
+        email_log,
+    )
 
     payer: dict[str, Any] = {
         "name": payer_name[:512],
@@ -147,7 +154,7 @@ def send_invoice(
         payload["accountNumber"] = account_number
 
     contacts = []
-    for email_value in _normalize_emails(email):
+    for email_value in normalized_emails:
         contacts.append({"email": email_value})
     if contact_phone:
         phone_norm = str(contact_phone).strip()
