@@ -229,10 +229,18 @@ def _prepare_pending_invoices(
             run_at=run_at,
             strict_period=strict_period,
         )
+        report_period_from, report_period_to = build_invoice_work_date_window_manual(
+            invoice_schedule=cp.invoice_schedule,
+            run_at=run_at,
+            strict_period=True,
+        )
         if from_date is not None:
             date_from = max(date_from, from_date) if date_from is not None else from_date
         if to_date is not None:
             date_to = min(date_to, to_date) if date_to is not None else to_date
+        if from_date is not None or to_date is not None:
+            report_period_from = date_from
+            report_period_to = date_to
         if date_from is not None and date_to is not None and date_from > date_to:
             logger.error(
                 "Пустой диапазон дат для %s: from_date=%s, to_date=%s",
@@ -311,7 +319,12 @@ def _prepare_pending_invoices(
                         "bitrix_company_id": cp.bitrix_company_id,
                         "email": group.email if group.email is not None else (cp.email or None),
                         "items": items,
-                        "comment": build_invoice_comment(group.works, contract=cp.contract),
+                        "comment": build_invoice_comment(
+                            group.works,
+                            contract=cp.contract,
+                            report_period_from=report_period_from,
+                            report_period_to=report_period_to,
+                        ),
                         "works_count": len(group.works),
                         "date_from": date_from,
                         "date_to": date_to,
@@ -334,7 +347,12 @@ def _prepare_pending_invoices(
                 )
                 return []
 
-            comment = build_invoice_comment(group.works, contract=cp.contract)
+            comment = build_invoice_comment(
+                group.works,
+                contract=cp.contract,
+                report_period_from=report_period_from,
+                report_period_to=report_period_to,
+            )
             inv_num = num_repo.get_next_number(session)
             inv = inv_repo.create(
                 session,

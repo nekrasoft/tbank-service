@@ -131,6 +131,11 @@ def _prepare_pending_invoices(counterparty_name: str, run_at: datetime) -> list[
             run_at=run_at,
             strict_period=strict_period,
         )
+        report_period_from, report_period_to = build_invoice_work_date_window(
+            invoice_schedule=cp.invoice_schedule,
+            run_at=run_at,
+            strict_period=True,
+        )
         if strict_period and warn_out_of_period and date_from is not None:
             old_count = works_repo.count_uninvoiced_before_date(
                 session,
@@ -174,7 +179,12 @@ def _prepare_pending_invoices(counterparty_name: str, run_at: datetime) -> list[
                     group.label or group.key,
                 )
                 return []
-            comment = build_invoice_comment(group_works, contract=cp.contract)
+            comment = build_invoice_comment(
+                group_works,
+                contract=cp.contract,
+                report_period_from=report_period_from,
+                report_period_to=report_period_to,
+            )
 
             inv_num = num_repo.get_next_number(session)
             inv = inv_repo.create(
