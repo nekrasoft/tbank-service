@@ -587,6 +587,7 @@ def add_task(
     tags: list[str] | None = None,
     deadline: datetime | None = None,
     priority: int | None = None,
+    flow_id: int | None = None,
     description_in_bbcode: bool = False,
     require_result: bool = False,
     webdav_file_ids: list[int | str] | None = None,
@@ -656,6 +657,12 @@ def add_task(
         if priority_int not in (0, 1, 2):
             raise ValueError("PRIORITY должен быть одним из значений: 0, 1, 2")
         fields["PRIORITY"] = priority_int
+
+    if flow_id is not None:
+        flow_id_int = int(flow_id)
+        if flow_id_int <= 0:
+            raise ValueError("FLOW_ID должен быть положительным целым числом")
+        fields["FLOW_ID"] = flow_id_int
 
     if require_result:
         # CODE=3 -> не завершать задачу без результата.

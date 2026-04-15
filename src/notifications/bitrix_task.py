@@ -28,6 +28,7 @@ _TASK_RESPONSIBLE_ID = 31648
 _TASK_AUDITORS = [8, 54, 18, 33036]
 _TASK_TAGS = ["киров", "новый_счет", "отправить в ЭДО"]
 _TASK_PRIORITY = 2
+_TASK_FLOW_ID = 16
 _TASK_REQUIRE_RESULT = True
 _TASK_WEBDAV_FILE_IDS = [1095778]
 _DEAL_STAGE_ID = "C102:FINAL_INVOICE"
@@ -186,6 +187,7 @@ def create_invoice_task_with_meta(
             tags=_TASK_TAGS,
             deadline=deadline,
             priority=_TASK_PRIORITY,
+            flow_id=_TASK_FLOW_ID,
             description_in_bbcode=True,
             require_result=_TASK_REQUIRE_RESULT,
             webdav_file_ids=_TASK_WEBDAV_FILE_IDS,
