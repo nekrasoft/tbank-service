@@ -110,6 +110,23 @@ def _comment_unit_and_volume_m3(work: Work) -> tuple[str, float]:
     return "шт", _BUNKER_VOLUME_M3
 
 
+def build_invoice_period_text(
+    *,
+    report_period_from: date_type | None = None,
+    report_period_to: date_type | None = None,
+) -> str:
+    """Форматирует период оказания услуг для комментария счёта/задач."""
+    if report_period_from and report_period_to:
+        return (
+            f"{report_period_from.strftime('%d.%m.%Y')} - {report_period_to.strftime('%d.%m.%Y')}"
+        )
+    if report_period_from:
+        return f"с {report_period_from.strftime('%d.%m.%Y')}"
+    if report_period_to:
+        return f"до {report_period_to.strftime('%d.%m.%Y')}"
+    return "не указан"
+
+
 def build_invoice_comment(
     works: list[Work],
     contract: str | None = None,
@@ -126,16 +143,10 @@ def build_invoice_comment(
     05.03.2026 Свободы 111А - 3 шт, 10.03.2026 Знак - 4 шт
     """
     contract_line = (contract or "").strip()
-    if report_period_from and report_period_to:
-        period_text = (
-            f"{report_period_from.strftime('%d.%m.%Y')} - {report_period_to.strftime('%d.%m.%Y')}"
-        )
-    elif report_period_from:
-        period_text = f"с {report_period_from.strftime('%d.%m.%Y')}"
-    elif report_period_to:
-        period_text = f"до {report_period_to.strftime('%d.%m.%Y')}"
-    else:
-        period_text = "не указан"
+    period_text = build_invoice_period_text(
+        report_period_from=report_period_from,
+        report_period_to=report_period_to,
+    )
 
     grouped: dict[tuple[date_type, str, str, str | None], float] = defaultdict(float)
     total_volume = 0.0

@@ -105,6 +105,7 @@ def create_invoice_task(
     invoice_link: str | None = None,
     pdf_url: str | None = None,
     invoice_items: list[dict[str, Any]] | None = None,
+    period_text: str | None = None,
     log_deal_request_payload: bool = False,
 ) -> str | None:
     """Создаёт задачу в Bitrix24 по факту выставления счёта."""
@@ -119,6 +120,7 @@ def create_invoice_task(
         invoice_link=invoice_link,
         pdf_url=pdf_url,
         invoice_items=invoice_items,
+        period_text=period_text,
         log_deal_request_payload=log_deal_request_payload,
     )
     if not result:
@@ -138,6 +140,7 @@ def create_invoice_task_with_meta(
     invoice_link: str | None = None,
     pdf_url: str | None = None,
     invoice_items: list[dict[str, Any]] | None = None,
+    period_text: str | None = None,
     log_deal_request_payload: bool = False,
 ) -> BitrixInvoiceTaskResult | None:
     """Создаёт задачу/сделку в Bitrix24 и возвращает их ID/URL."""
@@ -153,6 +156,7 @@ def create_invoice_task_with_meta(
         tbank_invoice_id=tbank_invoice_id,
         invoice_link=invoice_link,
         pdf_url=pdf_url,
+        period_text=period_text,
     )
     deadline = datetime.now().astimezone() + timedelta(days=1)
     task_title = _build_task_title(
@@ -312,6 +316,7 @@ def _build_task_description(
     tbank_invoice_id: str | None = None,
     invoice_link: str | None = None,
     pdf_url: str | None = None,
+    period_text: str | None = None,
 ) -> str:
     """
     Описание задачи для Bitrix24 в BBCode.
@@ -327,6 +332,8 @@ def _build_task_description(
         lines.append(f"[B]Сумма[/B]: {_format_money(invoice_amount)}")
     if pdf_url:
         lines.append(f"[B]PDF[/B]: [URL={pdf_url}]Документ[/URL]")
+    if period_text:
+        lines.append(f"[B]Период[/B]: {period_text}")
     lines.extend(
         [
             "",

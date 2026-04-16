@@ -103,7 +103,11 @@ def _prepare_pending_invoices(counterparty_name: str, run_at: datetime) -> list[
     from src.db.repos import invoices as inv_repo
     from src.db.repos import invoice_number as num_repo
     from src.db.repos import works as works_repo
-    from src.invoice.builder import build_invoice_comment, build_invoice_items
+    from src.invoice.builder import (
+        build_invoice_comment,
+        build_invoice_items,
+        build_invoice_period_text,
+    )
     from src.invoice.splitter import split_works_for_counterparty
     from src.invoice.window import add_business_days, build_invoice_work_date_window, env_bool
 
@@ -135,6 +139,10 @@ def _prepare_pending_invoices(counterparty_name: str, run_at: datetime) -> list[
             invoice_schedule=cp.invoice_schedule,
             run_at=run_at,
             strict_period=True,
+        )
+        period_text = build_invoice_period_text(
+            report_period_from=report_period_from,
+            report_period_to=report_period_to,
         )
         if strict_period and warn_out_of_period and date_from is not None:
             old_count = works_repo.count_uninvoiced_before_date(
@@ -235,6 +243,7 @@ def _prepare_pending_invoices(counterparty_name: str, run_at: datetime) -> list[
                     "invoice_date": today,
                     "items": items,
                     "comment": comment,
+                    "period_text": period_text,
                     "sheet_row_hashes": [w.sheet_row_hash for w in group_works if w.sheet_row_hash],
                     "split_group_key": group.key,
                     "split_group_label": group.label,
@@ -428,6 +437,7 @@ def main() -> None:
                         invoice_link=str(invoice_link) if invoice_link else None,
                         pdf_url=str(pdf_url) if pdf_url else None,
                         invoice_items=prepared["items"],
+                        period_text=prepared.get("period_text"),
                     )
                     if bitrix_result:
                         bitrix_task_url = bitrix_result.task_url

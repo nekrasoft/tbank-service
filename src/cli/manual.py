@@ -194,7 +194,11 @@ def _prepare_pending_invoices(
     from src.db.repos import invoices as inv_repo
     from src.db.repos import invoice_number as num_repo
     from src.db.repos import works as works_repo
-    from src.invoice.builder import build_invoice_comment, build_invoice_items
+    from src.invoice.builder import (
+        build_invoice_comment,
+        build_invoice_items,
+        build_invoice_period_text,
+    )
     from src.invoice.splitter import split_works_for_counterparty
     from src.invoice.window import add_business_days, build_invoice_work_date_window_manual, env_bool
 
@@ -241,6 +245,10 @@ def _prepare_pending_invoices(
         if from_date is not None or to_date is not None:
             report_period_from = date_from
             report_period_to = date_to
+        period_text = build_invoice_period_text(
+            report_period_from=report_period_from,
+            report_period_to=report_period_to,
+        )
         if date_from is not None and date_to is not None and date_from > date_to:
             logger.error(
                 "Пустой диапазон дат для %s: from_date=%s, to_date=%s",
@@ -325,6 +333,7 @@ def _prepare_pending_invoices(
                             report_period_from=report_period_from,
                             report_period_to=report_period_to,
                         ),
+                        "period_text": period_text,
                         "works_count": len(group.works),
                         "date_from": date_from,
                         "date_to": date_to,
@@ -400,6 +409,7 @@ def _prepare_pending_invoices(
                     "invoice_date": today,
                     "items": items,
                     "comment": comment,
+                    "period_text": period_text,
                     "sheet_row_hashes": [w.sheet_row_hash for w in group.works if w.sheet_row_hash],
                     "split_group_key": group.key,
                     "split_group_label": group.label,
@@ -587,6 +597,7 @@ def main() -> None:
                     invoice_date=prepared["invoice_date"],
                     bitrix_company_id=prepared["bitrix_company_id"],
                     invoice_items=prepared["items"],
+                    period_text=prepared.get("period_text"),
                     log_deal_request_payload=True,
                 )
                 bitrix_task_url = bitrix_result.task_url if bitrix_result else None
@@ -680,6 +691,7 @@ def main() -> None:
                     invoice_link=str(invoice_link) if invoice_link else None,
                     pdf_url=str(pdf_url) if pdf_url else None,
                     invoice_items=prepared["items"],
+                    period_text=prepared.get("period_text"),
                 )
                 if bitrix_result:
                     bitrix_task_url = bitrix_result.task_url
