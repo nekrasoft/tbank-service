@@ -312,9 +312,17 @@ def _invoice_total(invoice: Any) -> Decimal:
 
 
 def _build_invoice_state(open_invoices: list[Any], matched_incoming: list[Any]) -> dict[int, dict[str, Any]]:
+    invoice_by_id: dict[int, Any] = {int(invoice.id): invoice for invoice in open_invoices}
     paid_by_invoice: dict[int, Decimal] = defaultdict(lambda: Decimal("0.00"))
     for op in matched_incoming:
         invoice_id = int(op.matched_invoice_id)
+        invoice = invoice_by_id.get(invoice_id)
+        payment_dt = _payment_datetime(op)
+        if invoice and not _is_payment_after_invoice_issue(
+            payment_dt=payment_dt,
+            invoice_issued_at=invoice.issued_at,
+        ):
+            continue
         paid_by_invoice[invoice_id] += _operation_amount_from_row(op)
 
     state: dict[int, dict[str, Any]] = {}
@@ -384,6 +392,7 @@ def _match_operation_to_invoice(
     if amount <= 0:
         return None
 
+    payment_dt = _payment_datetime(operation)
     payer_inn = (operation.payer_inn or operation.counterparty_inn or "").strip()
     payer_name = operation.payer_name or operation.counterparty_name
 
@@ -400,6 +409,11 @@ def _match_operation_to_invoice(
                 if remaining <= 0:
                     continue
                 invoice = entry["invoice"]
+                if not _is_payment_after_invoice_issue(
+                    payment_dt=payment_dt,
+                    invoice_issued_at=invoice.issued_at,
+                ):
+                    continue
                 score = Decimal("1.00")
                 method = "invoice_number"
                 if payer_inn and invoice.counterparty and (invoice.counterparty.inn or "").strip() == payer_inn:
@@ -431,6 +445,12 @@ def _match_operation_to_invoice(
             entry = invoice_state.get(invoice_id)
             if not entry:
                 continue
+            invoice = entry["invoice"]
+            if not _is_payment_after_invoice_issue(
+                payment_dt=payment_dt,
+                invoice_issued_at=invoice.issued_at,
+            ):
+                continue
             remaining = _remaining_amount(entry)
             if remaining <= 0:
                 continue
@@ -459,6 +479,11 @@ def _match_operation_to_invoice(
             continue
 
         invoice = entry["invoice"]
+        if not _is_payment_after_invoice_issue(
+            payment_dt=payment_dt,
+            invoice_issued_at=invoice.issued_at,
+        ):
+            continue
         if not _payer_name_matches_counterparty(
             payer_name,
             full_name=invoice.counterparty.name if invoice.counterparty else None,
@@ -488,6 +513,26 @@ def _payment_datetime(op_row: Any) -> datetime | None:
     return op_row.charge_date or op_row.draw_date or op_row.operation_date
 
 
+def _is_payment_after_invoice_issue(
+    *,
+    payment_dt: datetime | None,
+    invoice_issued_at: datetime | None,
+) -> bool:
+    """
+    Платеж учитываем по счету только если он не раньше issued_at.
+
+    Если одна из дат отсутствует, считаем операцию допустимой.
+    """
+    if payment_dt is None or invoice_issued_at is None:
+        return True
+
+    payment_utc = _to_utc_aware(payment_dt)
+    issued_utc = _to_utc_aware(invoice_issued_at)
+    if payment_utc is None or issued_utc is None:
+        return True
+    return payment_utc >= issued_utc
+
+
 
 def _recalculate_payment_state(
     session: Any,
@@ -503,13 +548,21 @@ def _recalculate_payment_state(
     invoice_list = inv_repo.get_for_payment_recalc(session, sorted(invoice_ids))
     matched = st_ops_repo.get_matched_incoming_for_invoices(session, invoice_ids=sorted(invoice_ids))
 
+    invoice_by_id: dict[int, Any] = {int(invoice.id): invoice for invoice in invoice_list}
     paid_sum: dict[int, Decimal] = defaultdict(lambda: Decimal("0.00"))
     paid_at: dict[int, datetime | None] = {}
 
     for op in matched:
         inv_id = int(op.matched_invoice_id)
-        paid_sum[inv_id] += _operation_amount_from_row(op)
         payment_dt = _payment_datetime(op)
+        invoice = invoice_by_id.get(inv_id)
+        if invoice and not _is_payment_after_invoice_issue(
+            payment_dt=payment_dt,
+            invoice_issued_at=invoice.issued_at,
+        ):
+            continue
+
+        paid_sum[inv_id] += _operation_amount_from_row(op)
         if payment_dt is None:
             continue
         current = paid_at.get(inv_id)
