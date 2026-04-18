@@ -395,7 +395,15 @@ def _match_operation_to_invoice(
 
     payment_dt = _payment_datetime(operation)
     payer_inn = (operation.payer_inn or operation.counterparty_inn or "").strip()
+    if not payer_inn:
+        return None
     payer_name = operation.payer_name or operation.counterparty_name
+
+    def _has_required_inn(invoice: Any) -> bool:
+        if not invoice or not invoice.counterparty:
+            return False
+        invoice_inn = (invoice.counterparty.inn or "").strip()
+        return bool(invoice_inn) and invoice_inn == payer_inn
 
     # 1) Наиболее надежно: номер счета явно встречается в назначении/описании.
     mentioned_numbers = _extract_invoice_numbers(operation.pay_purpose, operation.description)
@@ -410,6 +418,8 @@ def _match_operation_to_invoice(
                 if remaining <= 0:
                     continue
                 invoice = entry["invoice"]
+                if not _has_required_inn(invoice):
+                    continue
                 if not _is_payment_after_invoice_issue(
                     payment_dt=payment_dt,
                     invoice_issued_at=invoice.issued_at,
@@ -417,8 +427,6 @@ def _match_operation_to_invoice(
                     continue
                 score = Decimal("1.00")
                 method = "invoice_number"
-                if payer_inn and invoice.counterparty and (invoice.counterparty.inn or "").strip() == payer_inn:
-                    score += Decimal("0.20")
                 if _amount_equal(amount, remaining) or _amount_equal(amount, entry["total"]):
                     score += Decimal("0.20")
                 if _payer_name_matches_counterparty(
@@ -440,32 +448,33 @@ def _match_operation_to_invoice(
             }
 
     # 2) Надежный fallback: уникальный ИНН + сумма в пределах остатка.
-    if payer_inn:
-        candidates = []
-        for invoice_id in invoices_by_inn.get(payer_inn, []):
-            entry = invoice_state.get(invoice_id)
-            if not entry:
-                continue
-            invoice = entry["invoice"]
-            if not _is_payment_after_invoice_issue(
-                payment_dt=payment_dt,
-                invoice_issued_at=invoice.issued_at,
-            ):
-                continue
-            remaining = _remaining_amount(entry)
-            if remaining <= 0:
-                continue
-            if amount - remaining > _AMOUNT_TOLERANCE:
-                continue
-            candidates.append(invoice_id)
+    candidates = []
+    for invoice_id in invoices_by_inn.get(payer_inn, []):
+        entry = invoice_state.get(invoice_id)
+        if not entry:
+            continue
+        invoice = entry["invoice"]
+        if not _has_required_inn(invoice):
+            continue
+        if not _is_payment_after_invoice_issue(
+            payment_dt=payment_dt,
+            invoice_issued_at=invoice.issued_at,
+        ):
+            continue
+        remaining = _remaining_amount(entry)
+        if remaining <= 0:
+            continue
+        if amount - remaining > _AMOUNT_TOLERANCE:
+            continue
+        candidates.append(invoice_id)
 
-        if len(candidates) == 1:
-            return {
-                "invoice_id": candidates[0],
-                "confidence": Decimal("0.88"),
-                "method": "payer_inn_amount",
-                "amount": amount,
-            }
+    if len(candidates) == 1:
+        return {
+            "invoice_id": candidates[0],
+            "confidence": Decimal("0.88"),
+            "method": "payer_inn_amount",
+            "amount": amount,
+        }
 
     # 3) Осторожный fallback: уникальное совпадение по имени + сумме.
     scored_name: list[tuple[Decimal, int, str]] = []
@@ -480,6 +489,8 @@ def _match_operation_to_invoice(
             continue
 
         invoice = entry["invoice"]
+        if not _has_required_inn(invoice):
+            continue
         if not _is_payment_after_invoice_issue(
             payment_dt=payment_dt,
             invoice_issued_at=invoice.issued_at,
