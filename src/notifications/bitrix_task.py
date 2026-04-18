@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
 import logging
 import os
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -18,6 +18,7 @@ from src.bitrix.client import (
     set_deal_product_rows,
     update_deal,
 )
+from src.invoice.window import add_business_days
 
 logger = logging.getLogger(__name__)
 
@@ -158,7 +159,7 @@ def create_invoice_task_with_meta(
         pdf_url=pdf_url,
         period_text=period_text,
     )
-    deadline = datetime.now().astimezone() + timedelta(days=1)
+    deadline = _build_task_deadline()
     task_title = _build_task_title(
         invoice_number=invoice_number,
         counterparty_short_name=counterparty_short_name,
@@ -216,6 +217,17 @@ def create_invoice_task_with_meta(
         task_id=task_id,
         task_url=task_url,
         deal_id=deal_id,
+    )
+
+
+def _build_task_deadline(*, now: datetime | None = None) -> datetime:
+    """Возвращает дедлайн задачи на следующий рабочий день в то же время."""
+    current = now.astimezone() if now is not None else datetime.now().astimezone()
+    deadline_date = add_business_days(current.date(), 1)
+    return current.replace(
+        year=deadline_date.year,
+        month=deadline_date.month,
+        day=deadline_date.day,
     )
 
 
