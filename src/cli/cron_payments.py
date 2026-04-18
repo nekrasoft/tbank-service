@@ -44,7 +44,8 @@ _DEFAULT_PAGE_LIMIT = 200
 _DEFAULT_UNMATCHED_LIMIT = 5000
 
 _INVOICE_HINT_RE = re.compile(
-    r"(?:сч[её]т(?:а|у|ом|ов)?|с/ф|сф|invoice|inv|no|n[оo]|#|№)\s*[:\-№#]*\s*(\d{1,15})",
+    r"(?:сч[её]т(?:а|у|ом|ов)?|сч\.?|с/ф|сф|invoice|inv)"
+    r"\s*(?:[:\-]\s*)?(?:(?:№|#|no|n[оo])\s*)?(\d{1,15})\b",
     re.IGNORECASE,
 )
 _NON_ALNUM_RE = re.compile(r"[^0-9a-zа-яё]+", re.IGNORECASE)
