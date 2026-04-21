@@ -105,6 +105,7 @@ def _prepare_pending_invoices(counterparty_name: str, run_at: datetime) -> list[
     from src.db.repos import works as works_repo
     from src.invoice.builder import (
         build_invoice_comment,
+        build_custom_payment_purpose,
         build_invoice_items,
         build_invoice_period_text,
     )
@@ -195,6 +196,10 @@ def _prepare_pending_invoices(counterparty_name: str, run_at: datetime) -> list[
                 report_period_from=report_period_from,
                 report_period_to=report_period_to,
             )
+            custom_payment_purpose = build_custom_payment_purpose(
+                invoice_number=inv_num,
+                contract=cp.contract,
+            )
 
             inv = inv_repo.create(
                 session,
@@ -244,6 +249,7 @@ def _prepare_pending_invoices(counterparty_name: str, run_at: datetime) -> list[
                     "invoice_date": today,
                     "items": items,
                     "comment": comment,
+                    "custom_payment_purpose": custom_payment_purpose,
                     "period_text": period_text,
                     "sheet_row_hashes": [w.sheet_row_hash for w in group_works if w.sheet_row_hash],
                     "split_group_key": group.key,
@@ -388,6 +394,7 @@ def main() -> None:
                     email=DEBUG_FORCE_EMAIL or prepared["email"],
                     contact_phone=prepared["contact_phone"],
                     comment=prepared["comment"],
+                    custom_payment_purpose=prepared.get("custom_payment_purpose"),
                 )
                 sent_to_tbank = True
                 tbank_id = resp.get("invoiceId") or resp.get("id")

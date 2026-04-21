@@ -127,6 +127,20 @@ def build_invoice_period_text(
     return "не указан"
 
 
+def build_custom_payment_purpose(
+    *,
+    invoice_number: str | None,
+    contract: str | None = None,
+) -> str:
+    """Формирует назначение платежа для поля customPaymentPurpose."""
+    invoice_number_text = (invoice_number or "").strip() or "НОМЕР_СЧЕТА"
+    purpose = f"Оплата по счету {invoice_number_text}"
+    contract_line = (contract or "").strip()
+    if contract_line:
+        purpose += f", {contract_line}"
+    return purpose
+
+
 def build_invoice_comment(
     works: list[Work],
     contract: str | None = None,
@@ -144,10 +158,14 @@ def build_invoice_comment(
     05.03.2026 Свободы 111А - 3 шт, 10.03.2026 Знак - 4 шт
     """
     contract_line = (contract or "").strip()
-    invoice_number_text = (invoice_number or "").strip() or "НОМЕР_СЧЕТА"
+    payment_purpose_text = build_custom_payment_purpose(
+        invoice_number=invoice_number,
+        contract=contract_line,
+    )
+    payment_purpose_hint_text = payment_purpose_text.split(",", 1)[0].strip()
     payment_purpose_hint = (
         "При оплате счета, пожалуйста, указывайте в назначении платежа: "
-        f'"Оплата по счету {invoice_number_text}"'
+        f'"{payment_purpose_hint_text}"'
     )
     period_text = build_invoice_period_text(
         report_period_from=report_period_from,

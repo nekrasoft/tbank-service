@@ -196,6 +196,7 @@ def _prepare_pending_invoices(
     from src.db.repos import works as works_repo
     from src.invoice.builder import (
         build_invoice_comment,
+        build_custom_payment_purpose,
         build_invoice_items,
         build_invoice_period_text,
     )
@@ -333,6 +334,10 @@ def _prepare_pending_invoices(
                             report_period_from=report_period_from,
                             report_period_to=report_period_to,
                         ),
+                        "custom_payment_purpose": build_custom_payment_purpose(
+                            invoice_number=None,
+                            contract=cp.contract,
+                        ),
                         "period_text": period_text,
                         "works_count": len(group.works),
                         "date_from": date_from,
@@ -363,6 +368,10 @@ def _prepare_pending_invoices(
                 invoice_number=inv_num,
                 report_period_from=report_period_from,
                 report_period_to=report_period_to,
+            )
+            custom_payment_purpose = build_custom_payment_purpose(
+                invoice_number=inv_num,
+                contract=cp.contract,
             )
             inv = inv_repo.create(
                 session,
@@ -410,6 +419,7 @@ def _prepare_pending_invoices(
                     "invoice_date": today,
                     "items": items,
                     "comment": comment,
+                    "custom_payment_purpose": custom_payment_purpose,
                     "period_text": period_text,
                     "sheet_row_hashes": [w.sheet_row_hash for w in group.works if w.sheet_row_hash],
                     "split_group_key": group.key,
@@ -642,6 +652,7 @@ def main() -> None:
                 email=target_email,
                 contact_phone=prepared["contact_phone"],
                 comment=prepared["comment"],
+                custom_payment_purpose=prepared.get("custom_payment_purpose"),
             )
             sent_to_tbank = True
             tbank_id = resp.get("invoiceId") or resp.get("id")
