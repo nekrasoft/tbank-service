@@ -356,13 +356,14 @@ def _prepare_pending_invoices(
                 )
                 return []
 
+            inv_num = num_repo.get_next_number(session)
             comment = build_invoice_comment(
                 group.works,
                 contract=cp.contract,
+                invoice_number=inv_num,
                 report_period_from=report_period_from,
                 report_period_to=report_period_to,
             )
-            inv_num = num_repo.get_next_number(session)
             inv = inv_repo.create(
                 session,
                 invoice_number=inv_num,

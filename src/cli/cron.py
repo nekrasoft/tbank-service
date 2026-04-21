@@ -187,14 +187,15 @@ def _prepare_pending_invoices(counterparty_name: str, run_at: datetime) -> list[
                     group.label or group.key,
                 )
                 return []
+            inv_num = num_repo.get_next_number(session)
             comment = build_invoice_comment(
                 group_works,
                 contract=cp.contract,
+                invoice_number=inv_num,
                 report_period_from=report_period_from,
                 report_period_to=report_period_to,
             )
 
-            inv_num = num_repo.get_next_number(session)
             inv = inv_repo.create(
                 session,
                 invoice_number=inv_num,

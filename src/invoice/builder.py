@@ -131,6 +131,7 @@ def build_invoice_comment(
     works: list[Work],
     contract: str | None = None,
     *,
+    invoice_number: str | None = None,
     report_period_from: date_type | None = None,
     report_period_to: date_type | None = None,
 ) -> str:
@@ -143,6 +144,11 @@ def build_invoice_comment(
     05.03.2026 Свободы 111А - 3 шт, 10.03.2026 Знак - 4 шт
     """
     contract_line = (contract or "").strip()
+    invoice_number_text = (invoice_number or "").strip() or "НОМЕР_СЧЕТА"
+    payment_purpose_hint = (
+        "При оплате счета, пожалуйста, указывайте в назначении платежа: "
+        f'"Оплата по счету {invoice_number_text}"'
+    )
     period_text = build_invoice_period_text(
         report_period_from=report_period_from,
         report_period_to=report_period_to,
@@ -159,7 +165,10 @@ def build_invoice_comment(
         total_volume += amount * volume_m3
 
     if not grouped:
-        body = f"Оказаны услуги за период {period_text}."
+        body = (
+            f"Оказаны услуги за период {period_text}."
+            f"\n\n{payment_purpose_hint}"
+        )
         return f"{contract_line}\n{body}" if contract_line else body
 
     parts: list[str] = []
@@ -179,6 +188,7 @@ def build_invoice_comment(
         f"Оказаны услуги за период {period_text}:\n"
         + ", ".join(parts)
         + f"\nОбщий объем: {total_volume_str} м3"
+        + f"\n\n{payment_purpose_hint}"
     )
     return f"{contract_line}\n{body}" if contract_line else body
 
