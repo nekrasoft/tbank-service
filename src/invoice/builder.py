@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections import defaultdict
 from datetime import date as date_type
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
@@ -25,6 +26,7 @@ _OPERATION_TYPE_MAP: dict[tuple[str, str], str] = {}
 _MONEY_Q = Decimal("0.01")
 _BUNKER_VOLUME_M3 = 8.0
 _TRIP_VOLUME_M3 = 30.0
+_BUNKER_NUM_RE = re.compile(r"\d+")
 
 
 def _load_operation_type_map() -> dict[tuple[str, str], str]:
@@ -110,6 +112,30 @@ def _comment_unit_and_volume_m3(work: Work) -> tuple[str, float]:
     return "шт", _BUNKER_VOLUME_M3
 
 
+def _parse_note_and_bunker_numbers(note: str | None) -> tuple[str, list[str]]:
+    """
+    Разделяет примечание на локацию и список номеров бункеров.
+
+    Пример: "Зарядное # 2,4,5" -> ("Зарядное", ["2", "4", "5"])
+    """
+    raw = (note or "").strip()
+    if not raw:
+        return "", []
+    if "#" not in raw:
+        return raw, []
+
+    raw_note, bunker_part = raw.split("#", 1)
+    note_text = raw_note.strip()
+    numbers: list[str] = []
+    seen: set[str] = set()
+    for number in _BUNKER_NUM_RE.findall(bunker_part):
+        if number in seen:
+            continue
+        seen.add(number)
+        numbers.append(number)
+    return note_text, numbers
+
+
 def build_invoice_period_text(
     *,
     report_period_from: date_type | None = None,
@@ -167,13 +193,21 @@ def build_invoice_comment(
     )
 
     grouped: dict[tuple[date_type, str, str, str | None], float] = defaultdict(float)
+    grouped_bunker_numbers: dict[tuple[date_type, str, str, str | None], list[str]] = defaultdict(list)
+    grouped_bunker_seen: dict[tuple[date_type, str, str, str | None], set[str]] = defaultdict(set)
     total_volume = 0.0
     for work in works:
         amount = _parse_amount(work.object_count)
-        note = (work.note or "").strip()
+        note, bunker_numbers = _parse_note_and_bunker_numbers(work.note)
         unit, volume_m3 = _comment_unit_and_volume_m3(work)
         op_type = _get_operation_type(work)
-        grouped[(work.date, note, unit, op_type)] += amount
+        key = (work.date, note, unit, op_type)
+        grouped[key] += amount
+        for number in bunker_numbers:
+            if number in grouped_bunker_seen[key]:
+                continue
+            grouped_bunker_seen[key].add(number)
+            grouped_bunker_numbers[key].append(number)
         total_volume += amount * volume_m3
 
     if not grouped:
@@ -184,16 +218,22 @@ def build_invoice_comment(
         return f"{contract_line}\n{body}" if contract_line else body
 
     parts: list[str] = []
-    for (work_date, note, unit, _op_type), total in sorted(
+    for key, total in sorted(
         grouped.items(),
         key=lambda x: (x[0][0], x[0][1], x[0][2], x[0][3] or ""),
     ):
+        work_date, note, unit, _op_type = key
         date_str = work_date.strftime("%d.%m.%Y")
         amount_str = _format_amount(total)
         if note:
-            parts.append(f"{date_str} {note} - {amount_str} {unit}")
+            comment_line = f"{date_str} {note} - {amount_str} {unit}"
         else:
-            parts.append(f"{date_str} - {amount_str} {unit}")
+            comment_line = f"{date_str} - {amount_str} {unit}"
+
+        bunker_numbers = grouped_bunker_numbers.get(key) or []
+        if bunker_numbers:
+            comment_line += f" ({','.join(bunker_numbers)})"
+        parts.append(comment_line)
 
     total_volume_str = _format_amount(total_volume)
     body = (
