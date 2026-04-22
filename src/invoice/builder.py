@@ -158,15 +158,9 @@ def build_invoice_comment(
     05.03.2026 Свободы 111А - 3 шт, 10.03.2026 Знак - 4 шт
     """
     contract_line = (contract or "").strip()
-    payment_purpose_text = build_custom_payment_purpose(
-        invoice_number=invoice_number,
-        contract=contract_line,
-    )
-    payment_purpose_hint_text = payment_purpose_text.split(",", 1)[0].strip()
-    payment_purpose_hint = (
-        "При оплате счета, пожалуйста, указывайте в назначении платежа: "
-        f'"{payment_purpose_hint_text}"'
-    )
+
+    payment_purpose_hint = "ВНИМАНИЕ! При оплате счёта, пожалуйста, указывайте номер счёта в назначении платежа!"
+
     period_text = build_invoice_period_text(
         report_period_from=report_period_from,
         report_period_to=report_period_to,
