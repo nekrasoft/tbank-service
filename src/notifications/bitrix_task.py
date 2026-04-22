@@ -56,7 +56,7 @@ _DEAL_DIRECTION_FIELD = "UF_CRM_1680515310897"
 _DEAL_DIRECTION_VALUE = 4818
 _DEAL_ADDRESS = "Киров"
 _DEAL_DEFAULT_PRODUCT_NAME = "Услуга по вывозу мусора из контейнера 8 м3"
-_TASK_PAYMENT_COMMENT_TEXT = "Оплата поступила"
+_TASK_PAYMENT_COMMENT_TEXT = "[T-Bank] Оплата поступила"
 _task_webhook_missing_logged = False
 _deal_webhook_missing_logged = False
 
@@ -273,50 +273,50 @@ def mark_invoice_paid_in_bitrix(
             invoice_number,
         )
 
-    deal_id = _normalize_positive_int(bitrix_deal_id)
-    if deal_id is None:
-        logger.info(
-            "Bitrix24 deal: deal_id не задан, пропускаем перевод в WON (счёт %s)",
-            invoice_number,
-        )
-        return
+    # deal_id = _normalize_positive_int(bitrix_deal_id)
+    # if deal_id is None:
+    #     logger.info(
+    #         "Bitrix24 deal: deal_id не задан, пропускаем перевод в WON (счёт %s)",
+    #         invoice_number,
+    #     )
+    #     return
 
-    if not _is_deal_webhook_configured():
-        logger.info(
-            "Bitrix24 deal: webhook не настроен, перевод в WON не выполнен "
-            "(счёт %s, deal_id=%s)",
-            invoice_number,
-            deal_id,
-        )
-        return
+    # if not _is_deal_webhook_configured():
+    #     logger.info(
+    #         "Bitrix24 deal: webhook не настроен, перевод в WON не выполнен "
+    #         "(счёт %s, deal_id=%s)",
+    #         invoice_number,
+    #         deal_id,
+    #     )
+    #     return
 
-    try:
-        is_updated = update_deal(
-            deal_id=deal_id,
-            fields={"STAGE_ID": _DEAL_WON_STAGE_ID},
-            webhook_env_var=_DEAL_WEBHOOK_ENV,
-        )
-        if is_updated:
-            logger.info(
-                "Bitrix24 deal: сделка %s переведена в %s по счёту %s",
-                deal_id,
-                _DEAL_WON_STAGE_ID,
-                invoice_number,
-            )
-        else:
-            logger.warning(
-                "Bitrix24 deal: crm.deal.update вернул false для сделки %s по счёту %s",
-                deal_id,
-                invoice_number,
-            )
-    except Exception as e:
-        logger.error(
-            "Bitrix24 deal: ошибка перевода сделки %s в %s по счёту %s — %s",
-            deal_id,
-            _DEAL_WON_STAGE_ID,
-            invoice_number,
-            e,
-        )
+    # try:
+    #     is_updated = update_deal(
+    #         deal_id=deal_id,
+    #         fields={"STAGE_ID": _DEAL_WON_STAGE_ID},
+    #         webhook_env_var=_DEAL_WEBHOOK_ENV,
+    #     )
+    #     if is_updated:
+    #         logger.info(
+    #             "Bitrix24 deal: сделка %s переведена в %s по счёту %s",
+    #             deal_id,
+    #             _DEAL_WON_STAGE_ID,
+    #             invoice_number,
+    #         )
+    #     else:
+    #         logger.warning(
+    #             "Bitrix24 deal: crm.deal.update вернул false для сделки %s по счёту %s",
+    #             deal_id,
+    #             invoice_number,
+    #         )
+    # except Exception as e:
+    #     logger.error(
+    #         "Bitrix24 deal: ошибка перевода сделки %s в %s по счёту %s — %s",
+    #         deal_id,
+    #         _DEAL_WON_STAGE_ID,
+    #         invoice_number,
+    #         e,
+    #     )
 
 
 def _build_task_description(
