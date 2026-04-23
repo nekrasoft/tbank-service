@@ -191,12 +191,10 @@ def send_invoice_payment_reminder(
     smtp_cls = smtplib.SMTP_SSL if use_ssl else smtplib.SMTP
     stage = "init"
     try:
-        with smtp_cls(timeout=float(timeout_sec)) as smtp:
+        stage = "connect"
+        with smtp_cls(host=host, port=port, timeout=float(timeout_sec)) as smtp:
             if smtp_debug:
                 smtp.set_debuglevel(1)
-
-            stage = "connect"
-            smtp.connect(host=host, port=port)
 
             stage = "ehlo"
             smtp.ehlo()
