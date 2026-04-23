@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 _DEFAULT_OFFSETS = (3, 7, 10, 14)
 _DEFAULT_LIMIT = 5000
 _MONEY_Q = Decimal("0.01")
+DEBUG_FORCE_EMAIL = (os.environ.get("DEBUG_FORCE_EMAIL") or "").strip() or None
 
 
 def _env_int(name: str, default: int, *, min_value: int | None = None, max_value: int | None = None) -> int:
@@ -179,7 +180,7 @@ def _run_reminders(
             # отправляем только один — самый поздний (максимальный offset).
             due_offset = max(due_offsets)
 
-            recipient_source = (
+            recipient_source = DEBUG_FORCE_EMAIL or (
                 (invoice.recipient_emails_snapshot or "").strip()
                 or (invoice.counterparty.email if invoice.counterparty else None)
             )
@@ -314,6 +315,11 @@ def main() -> None:
         offsets,
         limit,
     )
+    if DEBUG_FORCE_EMAIL:
+        logger.warning(
+            "Используется DEBUG_FORCE_EMAIL override для reminder-email: %s",
+            DEBUG_FORCE_EMAIL,
+        )
 
     stats = _run_reminders(
         offsets=offsets,

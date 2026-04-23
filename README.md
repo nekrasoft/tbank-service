@@ -211,6 +211,7 @@ BITRIX24_DEAL_WEBHOOK_URL=https://<portal>.bitrix24.ru/rest/<user_id>/<code>
 - Если в `.env` задан `DEBUG_FORCE_EMAIL`, все счета отправляются на этот адрес.
 - Если `DEBUG_FORCE_EMAIL` пустой, используется email контрагента из `counterparties.email`.
 - В `counterparties.email` можно указывать несколько адресов через запятую (например: `a@x.ru, b@y.ru`) — в T-Bank они отправляются как несколько контактов.
+- `DEBUG_FORCE_EMAIL` также применяется в `python3 -m src.cli.cron_invoice_reminders` и переопределяет получателя reminder-писем.
 
 ## Периодичность Выставления
 
