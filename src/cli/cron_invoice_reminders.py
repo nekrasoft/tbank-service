@@ -175,6 +175,10 @@ def _run_reminders(
             if not due_offsets:
                 continue
 
+            # Если к текущей дате накопилось несколько неотправленных шагов,
+            # отправляем только один — самый поздний (максимальный offset).
+            due_offset = max(due_offsets)
+
             recipient_source = (
                 (invoice.recipient_emails_snapshot or "").strip()
                 or (invoice.counterparty.email if invoice.counterparty else None)
@@ -190,94 +194,93 @@ def _run_reminders(
             total_amount = _invoice_total(invoice)
             payment_link = (invoice.payment_link or "").strip() or None
 
-            for offset in due_offsets:
-                stats["due_offsets"] += 1
+            stats["due_offsets"] += 1
 
-                if not recipients:
-                    message = "Не задан email получателя для счета"
-                    if dry_run:
-                        stats["would_skip"] += 1
-                        logger.info(
-                            "DRY-RUN: пропустили бы reminder invoice=%s offset=%s (%s)",
-                            invoice_number,
-                            offset,
-                            message,
-                        )
-                        continue
-
-                    reminders_repo.add_attempt(
-                        session,
-                        invoice_id=int(invoice.id),
-                        channel="email",
-                        schedule_offset_days=offset,
-                        overdue_days_at_send=overdue_days,
-                        recipient_snapshot=recipient_snapshot,
-                        status="skipped",
-                        error_text=message,
-                        sent_at=None,
-                    )
-                    stats["skipped"] += 1
-                    logger.warning(
-                        "Reminder skipped invoice=%s offset=%s: %s",
+            if not recipients:
+                message = "Не задан email получателя для счета"
+                if dry_run:
+                    stats["would_skip"] += 1
+                    logger.info(
+                        "DRY-RUN: пропустили бы reminder invoice=%s offset=%s (%s)",
                         invoice_number,
-                        offset,
+                        due_offset,
                         message,
                     )
                     continue
 
-                if dry_run:
-                    stats["would_send"] += 1
-                    logger.info(
-                        "DRY-RUN: отправили бы reminder invoice=%s offset=%s recipients=%s overdue=%s",
-                        invoice_number,
-                        offset,
-                        recipient_snapshot,
-                        overdue_days,
-                    )
-                    continue
+                reminders_repo.add_attempt(
+                    session,
+                    invoice_id=int(invoice.id),
+                    channel="email",
+                    schedule_offset_days=due_offset,
+                    overdue_days_at_send=overdue_days,
+                    recipient_snapshot=recipient_snapshot,
+                    status="skipped",
+                    error_text=message,
+                    sent_at=None,
+                )
+                stats["skipped"] += 1
+                logger.warning(
+                    "Reminder skipped invoice=%s offset=%s: %s",
+                    invoice_number,
+                    due_offset,
+                    message,
+                )
+                continue
 
-                try:
-                    send_invoice_payment_reminder(
-                        recipients=recipients,
-                        invoice_number=invoice_number,
-                        counterparty_name=counterparty_name,
-                        due_date=due_date,
-                        overdue_days=overdue_days,
-                        total_amount=total_amount,
-                        payment_link=payment_link,
-                    )
-                    reminders_repo.add_attempt(
-                        session,
-                        invoice_id=int(invoice.id),
-                        channel="email",
-                        schedule_offset_days=offset,
-                        overdue_days_at_send=overdue_days,
-                        recipient_snapshot=recipient_snapshot,
-                        status="sent",
-                        error_text=None,
-                        sent_at=now_utc,
-                    )
-                    sent_offsets_by_invoice.setdefault(int(invoice.id), set()).add(offset)
-                    stats["sent"] += 1
-                except Exception as e:
-                    error_text = str(e).strip()[:2000] or "Ошибка отправки email"
-                    reminders_repo.add_attempt(
-                        session,
-                        invoice_id=int(invoice.id),
-                        channel="email",
-                        schedule_offset_days=offset,
-                        overdue_days_at_send=overdue_days,
-                        recipient_snapshot=recipient_snapshot,
-                        status="failed",
-                        error_text=error_text,
-                        sent_at=None,
-                    )
-                    stats["failed"] += 1
-                    logger.exception(
-                        "Ошибка отправки reminder invoice=%s offset=%s",
-                        invoice_number,
-                        offset,
-                    )
+            if dry_run:
+                stats["would_send"] += 1
+                logger.info(
+                    "DRY-RUN: отправили бы reminder invoice=%s offset=%s recipients=%s overdue=%s",
+                    invoice_number,
+                    due_offset,
+                    recipient_snapshot,
+                    overdue_days,
+                )
+                continue
+
+            try:
+                send_invoice_payment_reminder(
+                    recipients=recipients,
+                    invoice_number=invoice_number,
+                    counterparty_name=counterparty_name,
+                    due_date=due_date,
+                    overdue_days=overdue_days,
+                    total_amount=total_amount,
+                    payment_link=payment_link,
+                )
+                reminders_repo.add_attempt(
+                    session,
+                    invoice_id=int(invoice.id),
+                    channel="email",
+                    schedule_offset_days=due_offset,
+                    overdue_days_at_send=overdue_days,
+                    recipient_snapshot=recipient_snapshot,
+                    status="sent",
+                    error_text=None,
+                    sent_at=now_utc,
+                )
+                sent_offsets_by_invoice.setdefault(int(invoice.id), set()).add(due_offset)
+                stats["sent"] += 1
+            except Exception as e:
+                error_text = str(e).strip()[:2000] or "Ошибка отправки email"
+                reminders_repo.add_attempt(
+                    session,
+                    invoice_id=int(invoice.id),
+                    channel="email",
+                    schedule_offset_days=due_offset,
+                    overdue_days_at_send=overdue_days,
+                    recipient_snapshot=recipient_snapshot,
+                    status="failed",
+                    error_text=error_text,
+                    sent_at=None,
+                )
+                stats["failed"] += 1
+                logger.exception(
+                    "Ошибка отправки reminder invoice=%s offset=%s",
+                    invoice_number,
+                    due_offset,
+                )
 
         if dry_run:
             session.rollback()
