@@ -82,6 +82,7 @@ def build_invoice_payment_reminder_text(
     overdue_days: int,
     total_amount: Decimal,
     payment_link: str | None,
+    pdf_url: str | None,
 ) -> str:
     """Текст email-напоминания клиенту."""
     lines = [
@@ -98,6 +99,10 @@ def build_invoice_payment_reminder_text(
             "",
             f"Ссылка для оплаты: {payment_link}",
         ])
+    if pdf_url:
+        if not payment_link:
+            lines.append("")
+        lines.append(f"Счет (PDF): {pdf_url}")
 
     lines.extend([
         "",
@@ -115,6 +120,7 @@ def send_invoice_payment_reminder(
     overdue_days: int,
     total_amount: Decimal,
     payment_link: str | None,
+    pdf_url: str | None,
 ) -> None:
     """Отправка email-напоминания клиенту о неоплаченном счёте."""
     normalized_recipients = normalize_emails(recipients)
@@ -159,6 +165,7 @@ def send_invoice_payment_reminder(
         overdue_days=overdue_days,
         total_amount=total_amount,
         payment_link=payment_link,
+        pdf_url=pdf_url,
     )
 
     msg = EmailMessage()

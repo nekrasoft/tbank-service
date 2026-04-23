@@ -193,6 +193,7 @@ def _run_reminders(
             invoice_number = (invoice.invoice_number or "").strip() or str(invoice.id)
             total_amount = _invoice_total(invoice)
             payment_link = (invoice.payment_link or "").strip() or None
+            pdf_url = (invoice.pdf_url or "").strip() or None
 
             stats["due_offsets"] += 1
 
@@ -248,6 +249,7 @@ def _run_reminders(
                     overdue_days=overdue_days,
                     total_amount=total_amount,
                     payment_link=payment_link,
+                    pdf_url=pdf_url,
                 )
                 reminders_repo.add_attempt(
                     session,
