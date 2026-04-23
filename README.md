@@ -68,6 +68,9 @@ python3 -m src.cli.cron
 # Cron оплаты: синк выписки и матчинг оплат к invoices
 python3 -m src.cli.cron_payments
 
+# Cron напоминаний клиентам о просрочке оплаты (email)
+python3 -m src.cli.cron_invoice_reminders
+
 # Импорт контрагентов в Bitrix24 CRM
 python3 -m src.cli.import_counterparties_to_bitrix24
 ```
@@ -83,6 +86,9 @@ python3 -m src.cli.import_counterparties_to_bitrix24
 - Для счетов в `invoices` добавлены агрегаты оплаты:
   - `paid_amount` — суммарно зачтенные входящие платежи;
   - `paid_at` — дата закрытия счета (когда сумма достигла total).
+- При успешной отправке счета в `invoices` также сохраняются:
+  - `payment_link` — ссылка на оплату;
+  - `recipient_emails_snapshot` — фактический список email получателей счета.
 - Автоматический матчинг выполняется по приоритетам:
   - номер счета в `payPurpose/description` (самый надежный путь);
   - `payer.inn + сумма` (если кандидат уникальный);
@@ -100,6 +106,31 @@ TBANK_STATEMENT_INITIAL_LOOKBACK_DAYS=90
 TBANK_STATEMENT_OVERLAP_MINUTES=180
 TBANK_STATEMENT_PAGE_LIMIT=200
 TBANK_STATEMENT_UNMATCHED_LIMIT=5000
+```
+
+## Напоминания О Просрочке Оплаты
+
+- Команда: `python3 -m src.cli.cron_invoice_reminders`.
+- Канал: отдельный email клиенту (не через T-Bank).
+- Напоминания отправляются только по полностью неоплаченным счетам:
+  - `status = issued`;
+  - `paid_amount <= 0.01`;
+  - `due_date <= today`.
+- Расписание задается смещениями в днях после `due_date`:
+  - по умолчанию: `3,7,10,14` (`INVOICE_REMINDER_OFFSETS_DAYS`).
+- Каждая попытка отправки фиксируется в `invoice_payment_reminders` со статусом:
+  - `sent`, `failed`, `skipped`.
+- Для превью без отправки и записи в БД:
+  - `python3 -m src.cli.cron_invoice_reminders --dry-run`.
+
+Минимум env для email-напоминаний:
+
+```env
+INVOICE_REMINDER_OFFSETS_DAYS=3,7,10,14
+INVOICE_REMINDER_EMAIL_SMTP_HOST=smtp.example.com
+INVOICE_REMINDER_EMAIL_SMTP_PORT=587
+INVOICE_REMINDER_EMAIL_SMTP_USE_TLS=true
+INVOICE_REMINDER_EMAIL_FROM=billing@example.com
 ```
 
 ## Импорт Контрагентов В Bitrix24

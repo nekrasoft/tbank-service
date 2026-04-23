@@ -1,1 +1,1 @@
-# Уведомления (Telegram, MAX)
+# Уведомления (Telegram, MAX, email-reminders)

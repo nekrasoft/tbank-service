@@ -122,6 +122,12 @@ class Invoice(Base):
     paid_amount = Column(Numeric(14, 2), nullable=False, default=Decimal("0.00"))
     paid_at = Column(DateTime, nullable=True)
     pdf_url = Column(String(500), nullable=True)
+    payment_link = Column(String(500), nullable=True, comment="Ссылка на оплату счёта")
+    recipient_emails_snapshot = Column(
+        String(1000),
+        nullable=True,
+        comment="Email(ы), на которые счет реально отправлялся при выставлении",
+    )
     bitrix_task_id = Column(Integer, nullable=True, comment="ID задачи в Bitrix24")
     bitrix_deal_id = Column(Integer, nullable=True, comment="ID сделки в Bitrix24")
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -211,3 +217,30 @@ class InvoiceNumberSeq(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     year_month = Column(String(7), nullable=False, unique=True, comment="YYYY (legacy: YYYY-MM)")
     last_number = Column(Integer, nullable=False, default=0)
+
+
+class InvoicePaymentReminder(Base):
+    """Журнал отправок напоминаний об оплате по счетам."""
+    __tablename__ = "invoice_payment_reminders"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    invoice_id = Column(Integer, ForeignKey("invoices.id", ondelete="CASCADE"), nullable=False, index=True)
+    channel = Column(String(20), nullable=False, default="email")
+    schedule_offset_days = Column(Integer, nullable=False, comment="Шаг напоминания в днях после due_date")
+    overdue_days_at_send = Column(Integer, nullable=True, comment="Фактическая просрочка в днях на момент отправки")
+    recipient_snapshot = Column(String(1000), nullable=True, comment="Получатели, куда отправлено напоминание")
+    status = Column(String(20), nullable=False, comment="sent, failed, skipped")
+    error_text = Column(Text, nullable=True)
+    sent_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    invoice = relationship("Invoice", backref="payment_reminders")
+    __table_args__ = (
+        Index("ix_invoice_payment_reminders_status_created_at", "status", "created_at"),
+        Index(
+            "ix_invoice_payment_reminders_invoice_channel_offset",
+            "invoice_id",
+            "channel",
+            "schedule_offset_days",
+        ),
+    )

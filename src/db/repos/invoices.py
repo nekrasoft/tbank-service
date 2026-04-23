@@ -83,16 +83,22 @@ def mark_as_issued(
     invoice_id: int,
     tbank_invoice_id: str | None,
     pdf_url: str | None = None,
+    payment_link: str | None = None,
+    recipient_emails_snapshot: str | None = None,
     bitrix_task_id: int | None = None,
     bitrix_deal_id: int | None = None,
 ) -> int:
     """Пометка счёта как успешно отправленного в T-Bank."""
-    values = {
+    values: dict[str, object] = {
         "status": "issued",
         "tbank_invoice_id": tbank_invoice_id,
     }
     if pdf_url is not None:
         values["pdf_url"] = pdf_url
+    if payment_link is not None:
+        values["payment_link"] = payment_link
+    if recipient_emails_snapshot is not None:
+        values["recipient_emails_snapshot"] = recipient_emails_snapshot
     if bitrix_task_id is not None:
         values["bitrix_task_id"] = bitrix_task_id
     if bitrix_deal_id is not None:
@@ -163,6 +169,33 @@ def get_for_payment_recalc(session: Session, invoice_ids: list[int]) -> list[Inv
         .where(Invoice.id.in_(invoice_ids))
         .options(selectinload(Invoice.items))
     )
+    return list(result.scalars().all())
+
+
+def get_unpaid_due_for_reminders(
+    session: Session,
+    *,
+    due_on_or_before: date,
+    paid_tolerance: Decimal = Decimal("0.01"),
+    limit: int | None = None,
+) -> list[Invoice]:
+    """
+    Счета-кандидаты для напоминаний клиентам.
+
+    Берем только полностью неоплаченные счета со сроком оплаты <= due_on_or_before.
+    """
+    stmt = (
+        select(Invoice)
+        .where(Invoice.due_date.is_not(None))
+        .where(Invoice.due_date <= due_on_or_before)
+        .where(Invoice.status == "issued")
+        .where(Invoice.paid_amount <= paid_tolerance)
+        .options(joinedload(Invoice.counterparty), selectinload(Invoice.items))
+        .order_by(Invoice.due_date.asc(), Invoice.id.asc())
+    )
+    if limit is not None and limit > 0:
+        stmt = stmt.limit(limit)
+    result = session.execute(stmt)
     return list(result.scalars().all())
 
 

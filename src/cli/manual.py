@@ -442,6 +442,8 @@ def _mark_invoice_issued(
     invoice_id: int,
     tbank_invoice_id: str | None,
     pdf_url: str | None = None,
+    payment_link: str | None = None,
+    recipient_emails_snapshot: str | None = None,
 ) -> None:
     """Фиксация успешной отправки счёта в T-Bank."""
     from src.db.connection import get_session
@@ -454,6 +456,8 @@ def _mark_invoice_issued(
             invoice_id=invoice_id,
             tbank_invoice_id=tbank_invoice_id,
             pdf_url=pdf_url,
+            payment_link=payment_link,
+            recipient_emails_snapshot=recipient_emails_snapshot,
         )
         if updated != 1:
             raise RuntimeError(f"Invoice id={invoice_id} не найден для mark_as_issued")
@@ -625,6 +629,7 @@ def main() -> None:
         return
 
     from src.notifications.bitrix_task import create_invoice_task_with_meta
+    from src.notifications.invoice_reminder_email import normalize_emails
     from src.notifications.max import send_invoice_notification as send_max_notification
     from src.notifications.telegram import send_invoice_notification_bytes
     from src.sheets.writer import mark_document_in_sheet
@@ -640,6 +645,7 @@ def main() -> None:
         counterparty_name = prepared["counterparty_name"]
         sent_to_tbank = False
         target_email = DEBUG_FORCE_EMAIL or prepared["email"]
+        recipient_emails_snapshot = ", ".join(normalize_emails(target_email)) or None
         try:
             resp = send_invoice(
                 invoice_number=invoice_number,
@@ -667,6 +673,8 @@ def main() -> None:
                 invoice_id=invoice_id,
                 tbank_invoice_id=str(tbank_id) if tbank_id else None,
                 pdf_url=str(pdf_url) if pdf_url else None,
+                payment_link=str(invoice_link) if invoice_link else None,
+                recipient_emails_snapshot=recipient_emails_snapshot,
             )
             try:
                 marked_rows = mark_document_in_sheet(
