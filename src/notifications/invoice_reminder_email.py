@@ -148,6 +148,7 @@ def send_invoice_payment_reminder(
         min_value=5,
         max_value=120,
     )
+    smtp_debug = _env_bool("INVOICE_REMINDER_EMAIL_SMTP_DEBUG", False)
 
     from_email = (os.environ.get("INVOICE_REMINDER_EMAIL_FROM") or "").strip()
     if not from_email:
@@ -176,15 +177,52 @@ def send_invoice_payment_reminder(
         msg["Reply-To"] = reply_to
     msg.set_content(text)
 
+    logger.info(
+        "Email reminder SMTP config: host=%s port=%s tls=%s ssl=%s user=%s timeout=%ss debug=%s",
+        host,
+        port,
+        use_tls,
+        use_ssl,
+        "set" if smtp_user else "not_set",
+        timeout_sec,
+        smtp_debug,
+    )
+
     smtp_cls = smtplib.SMTP_SSL if use_ssl else smtplib.SMTP
-    with smtp_cls(host=host, port=port, timeout=float(timeout_sec)) as smtp:
-        smtp.ehlo()
-        if use_tls and not use_ssl:
-            smtp.starttls()
+    stage = "init"
+    try:
+        with smtp_cls(timeout=float(timeout_sec)) as smtp:
+            if smtp_debug:
+                smtp.set_debuglevel(1)
+
+            stage = "connect"
+            smtp.connect(host=host, port=port)
+
+            stage = "ehlo"
             smtp.ehlo()
-        if smtp_user:
-            smtp.login(smtp_user, smtp_password or "")
-        smtp.send_message(msg)
+
+            if use_tls and not use_ssl:
+                stage = "starttls"
+                smtp.starttls()
+                stage = "ehlo_after_starttls"
+                smtp.ehlo()
+
+            if smtp_user:
+                stage = "login"
+                smtp.login(smtp_user, smtp_password or "")
+
+            stage = "send_message"
+            smtp.send_message(msg)
+    except TimeoutError as e:
+        raise TimeoutError(
+            "SMTP timeout: "
+            f"stage={stage}, host={host}, port={port}, tls={use_tls}, ssl={use_ssl}, timeout={timeout_sec}s"
+        ) from e
+    except smtplib.SMTPException as e:
+        raise RuntimeError(
+            "SMTP error: "
+            f"stage={stage}, host={host}, port={port}, tls={use_tls}, ssl={use_ssl}, detail={e}"
+        ) from e
 
     logger.info(
         "Email reminder: отправлено напоминание по счету %s на %s",
