@@ -3,7 +3,9 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
+from email.header import Header
 from email.message import EmailMessage
+from email.utils import formataddr
 import logging
 import os
 import re
@@ -67,6 +69,17 @@ def _format_money(value: Decimal) -> str:
     normalized = value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     text = f"{normalized:.2f}".replace(".", ",")
     return f"{text} руб."
+
+
+def _format_address(email: str, display_name: str | None = None) -> str:
+    """Формирует адрес для RFC-заголовков с поддержкой UTF-8 имени."""
+    addr = (email or "").strip()
+    if not addr:
+        return ""
+    name = (display_name or "").strip()
+    if not name:
+        return addr
+    return formataddr((str(Header(name, "utf-8")), addr))
 
 
 def build_invoice_payment_reminder_subject(*, invoice_number: str) -> str:
@@ -153,6 +166,8 @@ def send_invoice_payment_reminder(
     from_email = (os.environ.get("INVOICE_REMINDER_EMAIL_FROM") or "").strip()
     if not from_email:
         raise ValueError("Задайте INVOICE_REMINDER_EMAIL_FROM в .env")
+    from_name = (os.environ.get("INVOICE_REMINDER_EMAIL_FROM_NAME") or "").strip() or None
+    to_name = (os.environ.get("INVOICE_REMINDER_EMAIL_TO_NAME") or "").strip() or None
 
     smtp_user = (os.environ.get("INVOICE_REMINDER_EMAIL_SMTP_USER") or "").strip() or None
     smtp_password = (os.environ.get("INVOICE_REMINDER_EMAIL_SMTP_PASSWORD") or "").strip() or None
@@ -171,8 +186,8 @@ def send_invoice_payment_reminder(
 
     msg = EmailMessage()
     msg["Subject"] = subject
-    msg["From"] = from_email
-    msg["To"] = ", ".join(normalized_recipients)
+    msg["From"] = _format_address(from_email, from_name)
+    msg["To"] = ", ".join(_format_address(email, to_name) for email in normalized_recipients)
     if reply_to:
         msg["Reply-To"] = reply_to
     msg.set_content(text)
