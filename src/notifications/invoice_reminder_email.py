@@ -103,9 +103,11 @@ def build_invoice_payment_reminder_text(
         "",
         f"Напоминаем об оплате счета №{invoice_number}.",
         f"Срок оплаты: {due_date.strftime('%d.%m.%Y')}",
-        f"Просрочка: {overdue_days} дн.",
         f"Сумма к оплате: {_format_money(total_amount)}",
     ]
+
+    if overdue_days > 0:
+        lines.insert(4, f"Просрочка: {overdue_days} дн.")
 
     if payment_link:
         lines.extend([
