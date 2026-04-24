@@ -127,22 +127,51 @@ def build_invoice_payment_reminder_text(
     return "\n".join(lines)
 
 
-def send_invoice_payment_reminder(
+def build_invoice_payment_thank_you_subject(*, invoice_number: str) -> str:
+    """Тема письма-благодарности за оплату."""
+    return f"Спасибо за оплату счета №{invoice_number}"
+
+
+def build_invoice_payment_thank_you_text(
+    *,
+    counterparty_name: str,
+    invoice_number: str,
+    invoice_date: date,
+    payment_date: date,
+    due_date: date | None,
+    total_amount: Decimal,
+    was_overdue: bool,
+) -> str:
+    """Текст email-благодарности клиенту за оплату счета."""
+    thanks = "Благодарим за оплату" if was_overdue else "Благодарим за оперативную оплату"
+    lines = [
+        f"Здравствуйте, {counterparty_name}.",
+        "",
+        f"{thanks} счета №{invoice_number} от {invoice_date.strftime('%d.%m.%Y')}.",
+        f"Дата оплаты: {payment_date.strftime('%d.%m.%Y')}",
+        f"Сумма оплаты: {_format_money(total_amount)}",
+    ]
+
+    lines.extend([
+        "",
+        "Спасибо, что выбираете нашу компанию.",
+    ])
+    return "\n".join(lines)
+
+
+def _send_invoice_email(
     *,
     recipients: list[str],
+    subject: str,
+    text: str,
     invoice_number: str,
-    counterparty_name: str,
-    invoice_date: date,
-    due_date: date,
-    overdue_days: int,
-    total_amount: Decimal,
-    payment_link: str | None,
-    pdf_url: str | None,
+    kind: str,
+    empty_recipients_error: str,
 ) -> None:
-    """Отправка email-напоминания клиенту о неоплаченном счёте."""
+    """Отправляет текстовое письмо по общим SMTP-настройкам invoice email."""
     normalized_recipients = normalize_emails(recipients)
     if not normalized_recipients:
-        raise ValueError("Нет валидных email получателей для отправки напоминания")
+        raise ValueError(empty_recipients_error)
 
     host = (os.environ.get("INVOICE_REMINDER_EMAIL_SMTP_HOST") or "").strip()
     if not host:
@@ -177,18 +206,6 @@ def send_invoice_payment_reminder(
     smtp_password = (os.environ.get("INVOICE_REMINDER_EMAIL_SMTP_PASSWORD") or "").strip() or None
     reply_to = (os.environ.get("INVOICE_REMINDER_EMAIL_REPLY_TO") or "").strip() or None
 
-    subject = build_invoice_payment_reminder_subject(invoice_number=invoice_number)
-    text = build_invoice_payment_reminder_text(
-        counterparty_name=counterparty_name,
-        invoice_number=invoice_number,
-        invoice_date=invoice_date,
-        due_date=due_date,
-        overdue_days=overdue_days,
-        total_amount=total_amount,
-        payment_link=payment_link,
-        pdf_url=pdf_url,
-    )
-
     msg = EmailMessage()
     msg["Subject"] = subject
     msg["From"] = _format_address(from_email, from_name)
@@ -198,7 +215,8 @@ def send_invoice_payment_reminder(
     msg.set_content(text)
 
     logger.info(
-        "Email reminder SMTP config: host=%s port=%s tls=%s ssl=%s user=%s timeout=%ss debug=%s",
+        "Email %s SMTP config: host=%s port=%s tls=%s ssl=%s user=%s timeout=%ss debug=%s",
+        kind,
         host,
         port,
         use_tls,
@@ -243,7 +261,74 @@ def send_invoice_payment_reminder(
         ) from e
 
     logger.info(
-        "Email reminder: отправлено напоминание по счету %s на %s",
+        "Email %s: отправлено письмо по счету %s на %s",
+        kind,
         invoice_number,
         ", ".join(normalized_recipients),
+    )
+
+
+def send_invoice_payment_reminder(
+    *,
+    recipients: list[str],
+    invoice_number: str,
+    counterparty_name: str,
+    invoice_date: date,
+    due_date: date,
+    overdue_days: int,
+    total_amount: Decimal,
+    payment_link: str | None,
+    pdf_url: str | None,
+) -> None:
+    """Отправка email-напоминания клиенту о неоплаченном счёте."""
+    subject = build_invoice_payment_reminder_subject(invoice_number=invoice_number)
+    text = build_invoice_payment_reminder_text(
+        counterparty_name=counterparty_name,
+        invoice_number=invoice_number,
+        invoice_date=invoice_date,
+        due_date=due_date,
+        overdue_days=overdue_days,
+        total_amount=total_amount,
+        payment_link=payment_link,
+        pdf_url=pdf_url,
+    )
+    _send_invoice_email(
+        recipients=recipients,
+        subject=subject,
+        text=text,
+        invoice_number=invoice_number,
+        kind="reminder",
+        empty_recipients_error="Нет валидных email получателей для отправки напоминания",
+    )
+
+
+def send_invoice_payment_thank_you(
+    *,
+    recipients: list[str],
+    invoice_number: str,
+    counterparty_name: str,
+    invoice_date: date,
+    payment_date: date,
+    due_date: date | None,
+    total_amount: Decimal,
+    was_overdue: bool,
+) -> None:
+    """Отправка email-благодарности клиенту за оплату счёта."""
+    subject = build_invoice_payment_thank_you_subject(invoice_number=invoice_number)
+    text = build_invoice_payment_thank_you_text(
+        counterparty_name=counterparty_name,
+        invoice_number=invoice_number,
+        invoice_date=invoice_date,
+        payment_date=payment_date,
+        due_date=due_date,
+        total_amount=total_amount,
+        was_overdue=was_overdue,
+    )
+    _send_invoice_email(
+        recipients=recipients,
+        subject=subject,
+        text=text,
+        invoice_number=invoice_number,
+        kind="payment_thanks",
+        empty_recipients_error="Нет валидных email получателей для отправки благодарности за оплату",
     )

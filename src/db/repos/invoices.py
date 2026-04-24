@@ -167,7 +167,7 @@ def get_for_payment_recalc(session: Session, invoice_ids: list[int]) -> list[Inv
     result = session.execute(
         select(Invoice)
         .where(Invoice.id.in_(invoice_ids))
-        .options(selectinload(Invoice.items))
+        .options(joinedload(Invoice.counterparty), selectinload(Invoice.items))
     )
     return list(result.scalars().all())
 
@@ -199,6 +199,30 @@ def get_unpaid_due_for_reminders(
     return list(result.scalars().all())
 
 
+def get_paid_due_for_payment_thank_email(
+    session: Session,
+    *,
+    paid_from: datetime,
+    paid_to: datetime,
+    limit: int | None = None,
+) -> list[Invoice]:
+    """Оплаченные счета, по которым еще не отправили email-благодарность."""
+    stmt = (
+        select(Invoice)
+        .where(Invoice.status == "paid")
+        .where(Invoice.paid_at.is_not(None))
+        .where(Invoice.paid_at >= paid_from)
+        .where(Invoice.paid_at < paid_to)
+        .where(Invoice.payment_thank_email_sent_at.is_(None))
+        .options(joinedload(Invoice.counterparty), selectinload(Invoice.items))
+        .order_by(Invoice.paid_at.asc(), Invoice.id.asc())
+    )
+    if limit is not None and limit > 0:
+        stmt = stmt.limit(limit)
+    result = session.execute(stmt)
+    return list(result.scalars().all())
+
+
 def update_payment_state(
     session: Session,
     *,
@@ -216,5 +240,21 @@ def update_payment_state(
             paid_amount=paid_amount,
             paid_at=paid_at,
         )
+    )
+    return result.rowcount or 0
+
+
+def mark_payment_thank_email_sent(
+    session: Session,
+    *,
+    invoice_id: int,
+    sent_at: datetime,
+) -> int:
+    """Отмечает, что email-благодарность за оплату успешно отправлена."""
+    result = session.execute(
+        update(Invoice)
+        .where(Invoice.id == invoice_id)
+        .where(Invoice.payment_thank_email_sent_at.is_(None))
+        .values(payment_thank_email_sent_at=sent_at)
     )
     return result.rowcount or 0

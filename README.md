@@ -134,6 +134,16 @@ INVOICE_REMINDER_EMAIL_FROM=billing@example.com
 INVOICE_REMINDER_EMAIL_FROM_NAME=БлагоСервис
 ```
 
+`python3 -m src.cli.cron_payments` также отправляет одно письмо-благодарность по счетам,
+которые стали `paid` в текущий бизнес-день и еще не имеют
+`invoices.payment_thank_email_sent_at`.
+
+- Без просрочки в тексте используется фраза `Благодарим за оперативную оплату`.
+- С просрочкой используется фраза `Благодарим за оплату`.
+- SMTP-настройки используются те же: `INVOICE_REMINDER_EMAIL_*`.
+- Бизнес-день считается в `APP_TIMEZONE` или `TZ`, по умолчанию `Europe/Moscow`.
+- Лимит за запуск: `INVOICE_PAYMENT_THANK_EMAIL_LIMIT` (по умолчанию `5000`).
+
 ## Импорт Контрагентов В Bitrix24
 
 - Для импорта используется входящий вебхук `BITRIX24_WEBHOOK_URL` и метод `crm.company.add`.

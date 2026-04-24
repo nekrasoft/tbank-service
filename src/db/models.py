@@ -121,6 +121,11 @@ class Invoice(Base):
     status = Column(String(50), nullable=True, default="issued")
     paid_amount = Column(Numeric(14, 2), nullable=False, default=Decimal("0.00"))
     paid_at = Column(DateTime, nullable=True)
+    payment_thank_email_sent_at = Column(
+        DateTime,
+        nullable=True,
+        comment="Когда отправлено email-благодарность за оплату",
+    )
     pdf_url = Column(String(500), nullable=True)
     payment_link = Column(String(500), nullable=True, comment="Ссылка на оплату счёта")
     recipient_emails_snapshot = Column(
@@ -134,6 +139,9 @@ class Invoice(Base):
 
     counterparty = relationship("Counterparty", backref="invoices")
     items = relationship("InvoiceItem", backref="invoice", cascade="all, delete-orphan")
+    __table_args__ = (
+        Index("ix_invoices_payment_thank_email", "status", "paid_at", "payment_thank_email_sent_at"),
+    )
 
 
 class InvoiceItem(Base):

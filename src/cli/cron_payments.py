@@ -14,10 +14,11 @@ import re
 import sys
 import time
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 # Загрузка .env
 _env = Path(__file__).resolve().parent.parent.parent / ".env"
@@ -42,6 +43,7 @@ _DEFAULT_INITIAL_LOOKBACK_DAYS = 90
 _DEFAULT_OVERLAP_MINUTES = 180
 _DEFAULT_PAGE_LIMIT = 200
 _DEFAULT_UNMATCHED_LIMIT = 5000
+_DEFAULT_PAYMENT_THANK_EMAIL_LIMIT = 5000
 
 _INVOICE_HINT_RE = re.compile(
     r"(?:сч[её]т(?:а|у|ом|ов)?|сч\.?|с/ф|сф|invoice|inv)"
@@ -123,6 +125,26 @@ def _to_utc_naive(dt: datetime) -> datetime:
     return dt.astimezone(timezone.utc).replace(tzinfo=None, microsecond=0)
 
 
+def _get_business_timezone():
+    raw = (os.environ.get("APP_TIMEZONE") or os.environ.get("TZ") or "Europe/Moscow").strip()
+    try:
+        return ZoneInfo(raw)
+    except ZoneInfoNotFoundError:
+        logger.warning("Неизвестная таймзона APP_TIMEZONE/TZ='%s', используем UTC", raw)
+        return timezone.utc
+
+
+def _business_today() -> date:
+    return datetime.now(_get_business_timezone()).date()
+
+
+def _utc_naive_bounds_for_business_date(day: date) -> tuple[datetime, datetime]:
+    tz = _get_business_timezone()
+    start_local = datetime.combine(day, datetime.min.time()).replace(tzinfo=tz)
+    end_local = start_local + timedelta(days=1)
+    return _to_utc_naive(start_local), _to_utc_naive(end_local)
+
+
 
 def _to_utc_aware(dt: datetime | None) -> datetime | None:
     if dt is None:
@@ -130,6 +152,13 @@ def _to_utc_aware(dt: datetime | None) -> datetime | None:
     if dt.tzinfo is None:
         return dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
+
+
+def _business_date_from_utc_naive(dt: datetime | None) -> date | None:
+    utc_dt = _to_utc_aware(dt)
+    if utc_dt is None:
+        return None
+    return utc_dt.astimezone(_get_business_timezone()).date()
 
 
 
@@ -657,6 +686,116 @@ def _sync_paid_invoices_to_bitrix(newly_paid: list[dict[str, Any]]) -> None:
             )
 
 
+def _send_due_payment_thank_you_emails(*, limit: int) -> dict[str, int]:
+    """Отправляет email-благодарности по счетам, оплаченным в текущий бизнес-день."""
+    from src.db.connection import get_session
+    from src.db.repos import invoices as inv_repo
+    from src.notifications.invoice_reminder_email import (
+        normalize_emails,
+        send_invoice_payment_thank_you,
+    )
+
+    business_day = _business_today()
+    paid_from, paid_to = _utc_naive_bounds_for_business_date(business_day)
+    stats = {
+        "candidates": 0,
+        "sent": 0,
+        "failed": 0,
+        "skipped": 0,
+    }
+
+    session = get_session()
+    try:
+        invoices = inv_repo.get_paid_due_for_payment_thank_email(
+            session,
+            paid_from=paid_from,
+            paid_to=paid_to,
+            limit=limit,
+        )
+        stats["candidates"] = len(invoices)
+        if not invoices:
+            return stats
+
+        if DEBUG_FORCE_EMAIL:
+            logger.warning("Используется DEBUG_FORCE_EMAIL override для thank-you email: %s", DEBUG_FORCE_EMAIL)
+
+        for invoice in invoices:
+            invoice_number = (invoice.invoice_number or "").strip() or str(invoice.id)
+            recipient_source = DEBUG_FORCE_EMAIL or (
+                (invoice.recipient_emails_snapshot or "").strip()
+                or (invoice.counterparty.email if invoice.counterparty else None)
+            )
+            recipients = normalize_emails(recipient_source)
+            recipient_snapshot = ", ".join(recipients) or None
+            if not recipients:
+                stats["skipped"] += 1
+                logger.warning(
+                    "Payment thank-you email skipped invoice=%s: не задан email получателя",
+                    invoice_number,
+                )
+                continue
+
+            counterparty_name = (
+                (invoice.counterparty.name if invoice.counterparty else "")
+                or f"контрагент #{invoice.counterparty_id}"
+            )
+            invoice_date = _business_date_from_utc_naive(invoice.issued_at) or invoice.issued_at.date()
+            payment_date = _business_date_from_utc_naive(invoice.paid_at) or business_day
+            was_overdue = invoice.due_date is not None and payment_date > invoice.due_date
+            total_amount = _invoice_total(invoice)
+
+            try:
+                send_invoice_payment_thank_you(
+                    recipients=recipients,
+                    invoice_number=invoice_number,
+                    counterparty_name=counterparty_name,
+                    invoice_date=invoice_date,
+                    payment_date=payment_date,
+                    due_date=invoice.due_date,
+                    total_amount=total_amount,
+                    was_overdue=was_overdue,
+                )
+                sent_at = datetime.utcnow().replace(microsecond=0)
+                marked = inv_repo.mark_payment_thank_email_sent(
+                    session,
+                    invoice_id=int(invoice.id),
+                    sent_at=sent_at,
+                )
+                if not marked:
+                    session.rollback()
+                    stats["skipped"] += 1
+                    logger.info(
+                        "Payment thank-you email already marked invoice=%s recipients=%s",
+                        invoice_number,
+                        recipient_snapshot,
+                    )
+                    continue
+
+                session.commit()
+                stats["sent"] += 1
+                logger.info(
+                    "Payment thank-you email sent invoice=%s recipients=%s overdue=%s",
+                    invoice_number,
+                    recipient_snapshot,
+                    was_overdue,
+                )
+            except Exception:
+                session.rollback()
+                stats["failed"] += 1
+                logger.exception(
+                    "Ошибка отправки thank-you email invoice=%s recipients=%s",
+                    invoice_number,
+                    recipient_snapshot,
+                )
+
+        return stats
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
 def _log_dry_run_paid_preview(newly_paid: list[dict[str, Any]]) -> None:
     if not newly_paid:
         logger.info("DRY-RUN: нет счетов, которые перешли бы в paid")
@@ -905,13 +1044,23 @@ def main() -> None:
         min_value=100,
         max_value=100_000,
     )
+    payment_thank_email_limit = _env_int(
+        "INVOICE_PAYMENT_THANK_EMAIL_LIMIT",
+        _DEFAULT_PAYMENT_THANK_EMAIL_LIMIT,
+        min_value=1,
+        max_value=100_000,
+    )
 
     logger.info(
-        "Запуск cron_payments accounts=%s initial_lookback_days=%s overlap_minutes=%s page_limit=%s dry_run=%s dry_run_bitrix=%s",
+        (
+            "Запуск cron_payments accounts=%s initial_lookback_days=%s overlap_minutes=%s "
+            "page_limit=%s payment_thank_email_limit=%s dry_run=%s dry_run_bitrix=%s"
+        ),
         len(account_numbers),
         initial_lookback_days,
         overlap_minutes,
         page_limit,
+        payment_thank_email_limit,
         args.dry_run,
         args.dry_run_bitrix,
     )
@@ -935,6 +1084,7 @@ def main() -> None:
             logger.info(
                 "DRY-RUN: вызовы Bitrix24 отключены (используйте --dry-run --dry-run-bitrix)"
             )
+        logger.info("DRY-RUN: thank-you email отключены")
 
         logger.info(
             (
@@ -980,11 +1130,13 @@ def main() -> None:
         sys.exit(1)
 
     matched_count, recalc_stats, _ = _run_matching(unmatched_limit)
+    payment_thank_stats = _send_due_payment_thank_you_emails(limit=payment_thank_email_limit)
 
     logger.info(
         (
             "cron_payments завершен: fetched=%s created=%s matched=%s "
-            "invoice_state_updates=%s (paid=%s partially_paid=%s issued=%s)"
+            "invoice_state_updates=%s (paid=%s partially_paid=%s issued=%s) "
+            "payment_thanks_candidates=%s sent=%s failed=%s skipped=%s"
         ),
         total_fetched,
         total_created,
@@ -993,6 +1145,10 @@ def main() -> None:
         recalc_stats.get("paid", 0),
         recalc_stats.get("partially_paid", 0),
         recalc_stats.get("issued", 0),
+        payment_thank_stats.get("candidates", 0),
+        payment_thank_stats.get("sent", 0),
+        payment_thank_stats.get("failed", 0),
+        payment_thank_stats.get("skipped", 0),
     )
 
 
