@@ -91,6 +91,7 @@ def build_invoice_payment_reminder_text(
     *,
     counterparty_name: str,
     invoice_number: str,
+    invoice_date: date,
     due_date: date,
     overdue_days: int,
     total_amount: Decimal,
@@ -101,7 +102,7 @@ def build_invoice_payment_reminder_text(
     lines = [
         f"Здравствуйте, {counterparty_name}.",
         "",
-        f"Напоминаем об оплате счета №{invoice_number}.",
+        f"Напоминаем об оплате счета №{invoice_number} от {invoice_date.strftime('%d.%m.%Y')}.",
         f"Срок оплаты: {due_date.strftime('%d.%m.%Y')}",
         f"Сумма к оплате: {_format_money(total_amount)}",
     ]
@@ -131,6 +132,7 @@ def send_invoice_payment_reminder(
     recipients: list[str],
     invoice_number: str,
     counterparty_name: str,
+    invoice_date: date,
     due_date: date,
     overdue_days: int,
     total_amount: Decimal,
@@ -179,6 +181,7 @@ def send_invoice_payment_reminder(
     text = build_invoice_payment_reminder_text(
         counterparty_name=counterparty_name,
         invoice_number=invoice_number,
+        invoice_date=invoice_date,
         due_date=due_date,
         overdue_days=overdue_days,
         total_amount=total_amount,

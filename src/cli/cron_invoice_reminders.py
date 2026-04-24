@@ -192,6 +192,7 @@ def _run_reminders(
                 or f"контрагент #{invoice.counterparty_id}"
             )
             invoice_number = (invoice.invoice_number or "").strip() or str(invoice.id)
+            invoice_date = invoice.issued_at.date()
             total_amount = _invoice_total(invoice)
             payment_link = (invoice.payment_link or "").strip() or None
             pdf_url = (invoice.pdf_url or "").strip() or None
@@ -246,6 +247,7 @@ def _run_reminders(
                     recipients=recipients,
                     invoice_number=invoice_number,
                     counterparty_name=counterparty_name,
+                    invoice_date=invoice_date,
                     due_date=due_date,
                     overdue_days=overdue_days,
                     total_amount=total_amount,
