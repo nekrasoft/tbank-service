@@ -112,6 +112,28 @@ def _to_emails_snapshot(emails: list[str]) -> str | None:
     return ", ".join(normalized)
 
 
+def _build_reminder_recipients(invoice: Any) -> list[str]:
+    from src.notifications.invoice_reminder_email import normalize_emails
+
+    if DEBUG_FORCE_EMAIL:
+        return normalize_emails(DEBUG_FORCE_EMAIL)
+
+    recipient_sources: list[str] = []
+    primary = (invoice.recipient_emails_snapshot or "").strip()
+    if not primary and invoice.counterparty:
+        primary = (invoice.counterparty.email or "").strip()
+    if primary:
+        recipient_sources.append(primary)
+
+    accountant_email = ""
+    if invoice.counterparty:
+        accountant_email = (invoice.counterparty.email_accountant or "").strip()
+    if accountant_email:
+        recipient_sources.append(accountant_email)
+
+    return normalize_emails(recipient_sources)
+
+
 def _run_reminders(
     *,
     offsets: list[int],
@@ -121,10 +143,7 @@ def _run_reminders(
     from src.db.connection import get_session
     from src.db.repos import invoice_reminders as reminders_repo
     from src.db.repos import invoices as invoices_repo
-    from src.notifications.invoice_reminder_email import (
-        normalize_emails,
-        send_invoice_payment_reminder,
-    )
+    from src.notifications.invoice_reminder_email import send_invoice_payment_reminder
 
     today = date.today()
     now_utc = datetime.utcnow().replace(microsecond=0)
@@ -180,11 +199,7 @@ def _run_reminders(
             # отправляем только один — самый поздний (максимальный offset).
             due_offset = max(due_offsets)
 
-            recipient_source = DEBUG_FORCE_EMAIL or (
-                (invoice.recipient_emails_snapshot or "").strip()
-                or (invoice.counterparty.email if invoice.counterparty else None)
-            )
-            recipients = normalize_emails(recipient_source)
+            recipients = _build_reminder_recipients(invoice)
             recipient_snapshot = _to_emails_snapshot(recipients)
 
             counterparty_name = (

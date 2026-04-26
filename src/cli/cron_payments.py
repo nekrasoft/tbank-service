@@ -686,14 +686,33 @@ def _sync_paid_invoices_to_bitrix(newly_paid: list[dict[str, Any]]) -> None:
             )
 
 
+def _build_payment_thank_recipients(invoice: Any) -> list[str]:
+    from src.notifications.invoice_reminder_email import normalize_emails
+
+    if DEBUG_FORCE_EMAIL:
+        return normalize_emails(DEBUG_FORCE_EMAIL)
+
+    recipient_sources: list[str] = []
+    primary = (invoice.recipient_emails_snapshot or "").strip()
+    if not primary and invoice.counterparty:
+        primary = (invoice.counterparty.email or "").strip()
+    if primary:
+        recipient_sources.append(primary)
+
+    accountant_email = ""
+    if invoice.counterparty:
+        accountant_email = (invoice.counterparty.email_accountant or "").strip()
+    if accountant_email:
+        recipient_sources.append(accountant_email)
+
+    return normalize_emails(recipient_sources)
+
+
 def _send_due_payment_thank_you_emails(*, limit: int) -> dict[str, int]:
     """Отправляет email-благодарности по счетам, оплаченным в текущий бизнес-день."""
     from src.db.connection import get_session
     from src.db.repos import invoices as inv_repo
-    from src.notifications.invoice_reminder_email import (
-        normalize_emails,
-        send_invoice_payment_thank_you,
-    )
+    from src.notifications.invoice_reminder_email import send_invoice_payment_thank_you
 
     business_day = _business_today()
     paid_from, paid_to = _utc_naive_bounds_for_business_date(business_day)
@@ -721,11 +740,7 @@ def _send_due_payment_thank_you_emails(*, limit: int) -> dict[str, int]:
 
         for invoice in invoices:
             invoice_number = (invoice.invoice_number or "").strip() or str(invoice.id)
-            recipient_source = DEBUG_FORCE_EMAIL or (
-                (invoice.recipient_emails_snapshot or "").strip()
-                or (invoice.counterparty.email if invoice.counterparty else None)
-            )
-            recipients = normalize_emails(recipient_source)
+            recipients = _build_payment_thank_recipients(invoice)
             recipient_snapshot = ", ".join(recipients) or None
             if not recipients:
                 stats["skipped"] += 1

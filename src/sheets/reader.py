@@ -164,12 +164,13 @@ def read_counterparties(
     - ИНН контрагента
     - КПП контрагента
     - Email
+    - Email бухгалтера
     - Сокращенное наименование
     - Наименование контрагента
     - Договор (опционально)
 
     Возвращает список словарей с ключами:
-    inn, kpp, email, short_name, name, contract
+    inn, kpp, email, email_accountant, short_name, name, contract
     """
     schema = _load_schema()
     url = sheet_url or os.environ.get("GOOGLE_SHEET_URL") or schema.get("google_sheet_url")
@@ -193,6 +194,7 @@ def read_counterparties(
         "ИНН контрагента",
         "КПП контрагента",
         "Email",
+        "Email бухгалтера",
         "Сокращенное наименование",
         "Наименование контрагента",
         "Договор",
@@ -227,11 +229,12 @@ def read_counterparties(
         inn = str(row.get("ИНН контрагента", "") or "").strip()
         kpp = str(row.get("КПП контрагента", "") or "").strip()
         email = str(row.get("Email", "") or "").strip()
+        email_accountant = str(row.get("Email бухгалтера", "") or "").strip()
         short_name = str(row.get("Сокращенное наименование", "") or "").strip()
         name = str(row.get("Наименование контрагента", "") or "").strip()
         contract = str(row.get("Договор", "") or "").strip()
 
-        if not any([inn, kpp, email, short_name, name, contract]):
+        if not any([inn, kpp, email, email_accountant, short_name, name, contract]):
             continue
 
         counterparties.append(
@@ -239,6 +242,7 @@ def read_counterparties(
                 "inn": inn,
                 "kpp": kpp,
                 "email": email,
+                "email_accountant": email_accountant,
                 "short_name": short_name,
                 "name": name,
                 "contract": contract,

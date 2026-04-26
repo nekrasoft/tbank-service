@@ -112,6 +112,7 @@ TBANK_STATEMENT_UNMATCHED_LIMIT=5000
 
 - Команда: `python3 -m src.cli.cron_invoice_reminders`.
 - Канал: отдельный email клиенту (не через T-Bank).
+- Если у контрагента задан `email_accountant`, он добавляется в адресаты напоминаний и писем-благодарностей.
 - Напоминания отправляются только по полностью неоплаченным счетам:
   - `status = issued`;
   - `paid_amount <= 0.01`;
@@ -288,6 +289,7 @@ BITRIX24_DEAL_WEBHOOK_URL=https://<portal>.bitrix24.ru/rest/<user_id>/<code>
   - `ИНН контрагента`
   - `КПП контрагента`
   - `Email`
+  - `Email бухгалтера`
   - `Сокращенное наименование`
   - `Наименование контрагента`
   - `Договор` (например: `Договор №111 от 12.03.2025`)
@@ -295,6 +297,7 @@ BITRIX24_DEAL_WEBHOOK_URL=https://<portal>.bitrix24.ru/rest/<user_id>/<code>
   - новые контрагенты создаются;
   - для новых контрагентов `invoice_schedule` по умолчанию: `2weeks`;
   - существующие обновляются по `inn`/`short_name`;
+  - поле `email_accountant` синхронизируется из колонки `Email бухгалтера`;
   - поле `contract` (строка договора) синхронизируется из Sheets;
   - поля `phone`, `note`, `invoice_schedule` не перезаписываются из Sheets.
 

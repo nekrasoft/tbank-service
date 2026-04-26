@@ -109,6 +109,7 @@ def _sync_counterparties_rows(session: Session, rows: list[dict]) -> tuple[int, 
         raw_inn = str(row.get("inn", "") or "").strip()
         raw_kpp = str(row.get("kpp", "") or "").strip()
         raw_email = str(row.get("email", "") or "").strip()
+        raw_email_accountant = str(row.get("email_accountant", "") or "").strip()
         raw_contract = str(row.get("contract", "") or "").strip()
 
         inn = _normalize_inn(raw_inn)
@@ -139,6 +140,7 @@ def _sync_counterparties_rows(session: Session, rows: list[dict]) -> tuple[int, 
                 inn,
             )
         email = _normalize_email_list(raw_email)
+        email_accountant = _normalize_email_list(raw_email_accountant)
         contract = raw_contract
 
         by_inn = cp_repo.get_by_inn(session, inn)
@@ -164,6 +166,7 @@ def _sync_counterparties_rows(session: Session, rows: list[dict]) -> tuple[int, 
                 inn=inn,
                 kpp=kpp,
                 email=email,
+                email_accountant=email_accountant,
                 contract=contract,
             )
             created += 1
@@ -184,6 +187,9 @@ def _sync_counterparties_rows(session: Session, rows: list[dict]) -> tuple[int, 
             changed = True
         if (cp.email or "") != email:
             cp.email = email
+            changed = True
+        if (cp.email_accountant or "") != email_accountant:
+            cp.email_accountant = email_accountant
             changed = True
         if (cp.contract or "") != contract:
             cp.contract = contract or None
