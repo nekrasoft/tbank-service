@@ -233,7 +233,7 @@ def build_invoice_comment(
         bunker_numbers = grouped_bunker_numbers.get(key) or []
         if bunker_numbers:
             sorted_numbers = sorted(bunker_numbers, key=int)
-            comment_line += f" ({','.join(sorted_numbers)})"
+            comment_line += f" (№ {','.join(sorted_numbers)})"
         parts.append(comment_line)
 
     total_volume_str = _format_amount(total_volume)
