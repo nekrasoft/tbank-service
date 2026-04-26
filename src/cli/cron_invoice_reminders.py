@@ -118,18 +118,18 @@ def _build_reminder_recipients(invoice: Any) -> list[str]:
     if DEBUG_FORCE_EMAIL:
         return normalize_emails(DEBUG_FORCE_EMAIL)
 
+    accountant_email = ""
+    if invoice.counterparty:
+        accountant_email = (invoice.counterparty.email_accountant or "").strip()
+    if accountant_email:
+        return normalize_emails(accountant_email)
+
     recipient_sources: list[str] = []
     primary = (invoice.recipient_emails_snapshot or "").strip()
     if not primary and invoice.counterparty:
         primary = (invoice.counterparty.email or "").strip()
     if primary:
         recipient_sources.append(primary)
-
-    accountant_email = ""
-    if invoice.counterparty:
-        accountant_email = (invoice.counterparty.email_accountant or "").strip()
-    if accountant_email:
-        recipient_sources.append(accountant_email)
 
     return normalize_emails(recipient_sources)
 
