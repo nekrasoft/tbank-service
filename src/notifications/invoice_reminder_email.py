@@ -208,6 +208,7 @@ def _send_invoice_email(
         raise ValueError("Задайте INVOICE_REMINDER_EMAIL_FROM в .env")
     from_name = (os.environ.get("INVOICE_REMINDER_EMAIL_FROM_NAME") or "").strip() or None
     to_name = (os.environ.get("INVOICE_REMINDER_EMAIL_TO_NAME") or "").strip() or None
+    copy_to_from = _env_bool("INVOICE_REMINDER_EMAIL_COPY_TO_FROM", False)
 
     smtp_user = (os.environ.get("INVOICE_REMINDER_EMAIL_SMTP_USER") or "").strip() or None
     smtp_password = (os.environ.get("INVOICE_REMINDER_EMAIL_SMTP_PASSWORD") or "").strip() or None
@@ -217,6 +218,8 @@ def _send_invoice_email(
     msg["Subject"] = subject
     msg["From"] = _format_address(from_email, from_name)
     msg["To"] = ", ".join(_format_address(email, to_name) for email in normalized_recipients)
+    if copy_to_from and from_email.lower() not in {email.lower() for email in normalized_recipients}:
+        msg["Bcc"] = _format_address(from_email, from_name)
     if reply_to:
         msg["Reply-To"] = reply_to
     msg.set_content(text)

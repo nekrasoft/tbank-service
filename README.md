@@ -133,6 +133,7 @@ INVOICE_REMINDER_EMAIL_SMTP_PORT=587
 INVOICE_REMINDER_EMAIL_SMTP_USE_TLS=true
 INVOICE_REMINDER_EMAIL_FROM=billing@example.com
 INVOICE_REMINDER_EMAIL_FROM_NAME=БлагоСервис
+INVOICE_REMINDER_EMAIL_COPY_TO_FROM=false
 ```
 
 `python3 -m src.cli.cron_payments` также отправляет одно письмо-благодарность по счетам,
@@ -142,6 +143,7 @@ INVOICE_REMINDER_EMAIL_FROM_NAME=БлагоСервис
 - Без просрочки в тексте используется фраза `Благодарим за оперативную оплату`.
 - С просрочкой используется фраза `Благодарим за оплату`.
 - SMTP-настройки используются те же: `INVOICE_REMINDER_EMAIL_*`.
+- Если `INVOICE_REMINDER_EMAIL_COPY_TO_FROM=true`, reminder и thank-you письма дублируются скрытой копией на `INVOICE_REMINDER_EMAIL_FROM`.
 - Бизнес-день считается в `APP_TIMEZONE` или `TZ`, по умолчанию `Europe/Moscow`.
 - Лимит за запуск: `INVOICE_PAYMENT_THANK_EMAIL_LIMIT` (по умолчанию `5000`).
 
