@@ -44,6 +44,7 @@ _DEFAULT_OVERLAP_MINUTES = 180
 _DEFAULT_PAGE_LIMIT = 200
 _DEFAULT_UNMATCHED_LIMIT = 5000
 _DEFAULT_PAYMENT_THANK_EMAIL_LIMIT = 5000
+DEBUG_FORCE_EMAIL = (os.environ.get("DEBUG_FORCE_EMAIL") or "").strip() or None
 
 _INVOICE_HINT_RE = re.compile(
     r"(?:сч[её]т(?:а|у|ом|ов)?|сч\.?|с/ф|сф|invoice|inv)"
