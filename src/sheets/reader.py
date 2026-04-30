@@ -168,9 +168,11 @@ def read_counterparties(
     - Сокращенное наименование
     - Наименование контрагента
     - Договор (опционально)
+    - Напоминания по неоплаченным счетам (опционально)
 
     Возвращает список словарей с ключами:
-    inn, kpp, email, email_accountant, short_name, name, contract
+    inn, kpp, email, email_accountant, short_name, name, contract,
+    payment_reminders_enabled
     """
     schema = _load_schema()
     url = sheet_url or os.environ.get("GOOGLE_SHEET_URL") or schema.get("google_sheet_url")
@@ -190,6 +192,11 @@ def read_counterparties(
     spreadsheet = client.open_by_key(sheet_id)
     worksheet = spreadsheet.worksheet(cp_sheet_name)
 
+    payment_reminders_headers = [
+        "Напоминания по неоплаченным счетам",
+        "Напоминания об оплате",
+        "payment_reminders_enabled",
+    ]
     required_headers = [
         "ИНН контрагента",
         "КПП контрагента",
@@ -198,6 +205,7 @@ def read_counterparties(
         "Сокращенное наименование",
         "Наименование контрагента",
         "Договор",
+        *payment_reminders_headers,
     ]
     try:
         records = worksheet.get_all_records(expected_headers=required_headers)
@@ -233,6 +241,14 @@ def read_counterparties(
         short_name = str(row.get("Сокращенное наименование", "") or "").strip()
         name = str(row.get("Наименование контрагента", "") or "").strip()
         contract = str(row.get("Договор", "") or "").strip()
+        payment_reminders_enabled = ""
+        for header in payment_reminders_headers:
+            raw_payment_reminders_enabled = row.get(header, "")
+            if raw_payment_reminders_enabled is None:
+                raw_payment_reminders_enabled = ""
+            payment_reminders_enabled = str(raw_payment_reminders_enabled).strip()
+            if payment_reminders_enabled:
+                break
 
         if not any([inn, kpp, email, email_accountant, short_name, name, contract]):
             continue
@@ -246,6 +262,7 @@ def read_counterparties(
                 "short_name": short_name,
                 "name": name,
                 "contract": contract,
+                "payment_reminders_enabled": payment_reminders_enabled,
             }
         )
     return counterparties

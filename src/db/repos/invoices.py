@@ -7,7 +7,7 @@ from decimal import Decimal
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session, joinedload, selectinload
 
-from src.db.models import Invoice, InvoiceItem
+from src.db.models import Counterparty, Invoice, InvoiceItem
 
 
 def create(
@@ -186,10 +186,12 @@ def get_unpaid_due_for_reminders(
     """
     stmt = (
         select(Invoice)
+        .join(Invoice.counterparty)
         .where(Invoice.due_date.is_not(None))
         .where(Invoice.due_date <= due_on_or_before)
         .where(Invoice.status == "issued")
         .where(Invoice.paid_amount <= paid_tolerance)
+        .where(Counterparty.payment_reminders_enabled.is_(True))
         .options(joinedload(Invoice.counterparty), selectinload(Invoice.items))
         .order_by(Invoice.due_date.asc(), Invoice.id.asc())
     )

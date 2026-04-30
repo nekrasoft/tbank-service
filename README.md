@@ -117,6 +117,8 @@ TBANK_STATEMENT_UNMATCHED_LIMIT=5000
   - `status = issued`;
   - `paid_amount <= 0.01`;
   - `due_date <= today`.
+- Для контрагента можно выключить рассылку через `counterparties.payment_reminders_enabled = false`
+  (по умолчанию включено).
 - Расписание задается смещениями в днях после `due_date`:
   - по умолчанию: `3,7,10,14` (`INVOICE_REMINDER_OFFSETS_DAYS`).
 - Каждая попытка отправки фиксируется в `invoice_payment_reminders` со статусом:
@@ -295,11 +297,14 @@ BITRIX24_DEAL_WEBHOOK_URL=https://<portal>.bitrix24.ru/rest/<user_id>/<code>
   - `Сокращенное наименование`
   - `Наименование контрагента`
   - `Договор` (например: `Договор №111 от 12.03.2025`)
+  - `Напоминания по неоплаченным счетам` (опционально: `да`/`нет`, `true`/`false`, `1`/`0`)
 - При синхронизации выполняется upsert в таблицу `counterparties`:
   - новые контрагенты создаются;
   - для новых контрагентов `invoice_schedule` по умолчанию: `2weeks`;
+  - для новых контрагентов `payment_reminders_enabled` по умолчанию: `true`;
   - существующие обновляются по `inn`/`short_name`;
   - поле `email_accountant` синхронизируется из колонки `Email бухгалтера`;
+  - поле `payment_reminders_enabled` меняется только если колонка напоминаний явно заполнена;
   - поле `contract` (строка договора) синхронизируется из Sheets;
   - поля `phone`, `note`, `invoice_schedule` не перезаписываются из Sheets.
 
