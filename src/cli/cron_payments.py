@@ -550,7 +550,7 @@ def _parse_pay_purpose_analytics(
 
 
 def _cashless_operation_date(operation: Any) -> date | None:
-    dt = operation.operation_date or operation.charge_date or operation.draw_date
+    dt = _operation_effective_datetime(operation)
     return _business_date_from_utc_naive(dt)
 
 
@@ -666,15 +666,18 @@ def _normalize_operation(raw_op: dict[str, Any], *, default_account_number: str)
     }
 
 
+_STATEMENT_WINDOW_DATE_FIELDS = (
+    "doc_date",
+    "trxn_post_date",
+    "authorization_date",
+    "operation_date",
+    "charge_date",
+    "draw_date",
+)
+
+
 def _operation_window_datetime_with_field(operation_data: dict[str, Any]) -> tuple[str | None, datetime | None]:
-    for field_name in (
-        "operation_date",
-        "charge_date",
-        "draw_date",
-        "trxn_post_date",
-        "authorization_date",
-        "doc_date",
-    ):
+    for field_name in _STATEMENT_WINDOW_DATE_FIELDS:
         value = operation_data.get(field_name)
         if value is not None:
             return field_name, value
@@ -684,6 +687,14 @@ def _operation_window_datetime_with_field(operation_data: dict[str, Any]) -> tup
 def _operation_window_datetime(operation_data: dict[str, Any]) -> datetime | None:
     _, value = _operation_window_datetime_with_field(operation_data)
     return value
+
+
+def _operation_effective_datetime(operation: Any) -> datetime | None:
+    for field_name in _STATEMENT_WINDOW_DATE_FIELDS:
+        value = getattr(operation, field_name, None)
+        if value is not None:
+            return value
+    return None
 
 
 def _dt_log(value: datetime | None) -> str | None:
@@ -923,7 +934,7 @@ def _match_operation_to_invoice(
 
 
 def _payment_datetime(op_row: Any) -> datetime | None:
-    return op_row.charge_date or op_row.draw_date or op_row.operation_date
+    return _operation_effective_datetime(op_row)
 
 
 def _is_payment_after_invoice_issue(
