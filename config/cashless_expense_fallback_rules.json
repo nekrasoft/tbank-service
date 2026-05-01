@@ -12,6 +12,18 @@
       "operation_code": "185"
     },
     {
+      "name": "own_account_transfer_counterparties",
+      "counterparty_contains_any": [
+        "алексеев алексей николаевич",
+        "ип ромашова",
+        "ип левина ольга олеговна",
+        "ип мельник виталий владимирович",
+        "ип горчаков"
+      ],
+      "structure_code": "1200",
+      "operation_code": "126"
+    },
+    {
       "name": "fuel_azs",
       "contains_any": ["azs"],
       "operation_code": "183"
