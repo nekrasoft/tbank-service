@@ -1,6 +1,8 @@
 # Репозиторий контрагентов
 from __future__ import annotations
 
+from typing import Iterable
+
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
@@ -32,6 +34,24 @@ def get_by_inn(session: Session, inn: str) -> Counterparty | None:
         select(Counterparty).where(Counterparty.inn == inn)
     )
     return result.scalars().first()
+
+
+def get_short_names_by_inn(session: Session, inns: Iterable[str]) -> dict[str, str]:
+    """Получение short_name контрагентов по ИНН."""
+    cleaned_inns = {str(inn or "").strip() for inn in inns}
+    cleaned_inns.discard("")
+    if not cleaned_inns:
+        return {}
+
+    result = session.execute(
+        select(Counterparty.inn, Counterparty.short_name)
+        .where(Counterparty.inn.in_(cleaned_inns))
+    )
+    return {
+        str(inn or "").strip(): str(short_name or "").strip()
+        for inn, short_name in result.all()
+        if str(inn or "").strip()
+    }
 
 
 def get_by_short_name(

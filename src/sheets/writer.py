@@ -61,6 +61,7 @@ _CASHLESS_INCOME_HEADERS = [
     "Расчетный счет",
     "Структура",
     "КСП",
+    "Контрагент, имя",
 ]
 _CASHLESS_INCOME_FORMULA_HEADERS = ["КСП"]
 _CASHLESS_INCOME_VALIDATION_HEADERS = ["Структура"]
@@ -347,6 +348,7 @@ def _cashless_income_values(row: dict[str, Any], col_indices: dict[str, int]) ->
         "Расчетный счет": row.get("account_label", ""),
         "Структура": row.get("structure", ""),
         "КСП": "",
+        "Контрагент, имя": row.get("counterparty_short_name", ""),
     }
     for header, value in by_header.items():
         idx = col_indices.get(header)

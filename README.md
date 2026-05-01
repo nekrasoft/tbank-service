@@ -100,6 +100,7 @@ python3 -m src.cli.import_counterparties_to_bitrix24
   `Структура` заполняется дефолтным значением из `GOOGLE_CASHLESS_DEFAULT_STRUCTURE_CODE`
   или `default_structure_code` в `config/cashless_expense_fallback_rules.json`; формула и форматирование
   `КСП`, а также проверка данных `Структура` копируются из предыдущей строки.
+  В колонку `Контрагент, имя` записывается `short_name` из `counterparties`, найденный по ИНН плательщика.
 - Для повторной выгрузки расходов используйте `--force-cashless-expenses`; флаг игнорирует отметку
   `cashless_expense_sheet_synced_at`, но не отключает дедупликацию уже существующих строк в листе.
   Нижнюю дату можно задать через `--cashless-expenses-from-date YYYY-MM-DD` или `--from-date DD.MM.YYYY`.

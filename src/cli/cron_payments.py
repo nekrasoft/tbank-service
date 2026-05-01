@@ -364,6 +364,10 @@ def _operation_counterparty_for_income(operation: Any) -> str:
     )
 
 
+def _operation_counterparty_inn_for_income(operation: Any) -> str:
+    return str(operation.payer_inn or "").strip() or str(operation.counterparty_inn or "").strip()
+
+
 def _operation_purpose_for_sheet(operation: Any) -> str:
     return str(operation.pay_purpose or "").strip() or str(operation.description or "").strip()
 
@@ -1356,6 +1360,7 @@ def _build_cashless_income_sheet_rows(
     *,
     account_labels: dict[str, str],
     default_structure_name: str,
+    counterparty_short_names_by_inn: dict[str, str],
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for operation in operations:
@@ -1365,6 +1370,7 @@ def _build_cashless_income_sheet_rows(
             continue
 
         account_number = str(operation.account_number or "").strip()
+        counterparty_inn = _operation_counterparty_inn_for_income(operation)
         rows.append(
             {
                 "operation_row_id": int(operation.id),
@@ -1375,6 +1381,7 @@ def _build_cashless_income_sheet_rows(
                 "pay_purpose": _operation_purpose_for_sheet(operation),
                 "account_label": _account_label(account_number, account_labels),
                 "structure": default_structure_name,
+                "counterparty_short_name": counterparty_short_names_by_inn.get(counterparty_inn, ""),
             }
         )
     return rows
@@ -1387,6 +1394,7 @@ def _sync_cashless_incomes_to_sheets(
     from_date: date | None = None,
 ) -> dict[str, int]:
     from src.db.connection import get_session
+    from src.db.repos import counterparties as cp_repo
     from src.db.repos import statement_operations as st_ops_repo
     from src.sheets.writer import append_cashless_income_rows
 
@@ -1415,6 +1423,10 @@ def _sync_cashless_incomes_to_sheets(
             operations,
             account_labels=_get_account_labels(),
             default_structure_name=_default_cashless_structure_name(_load_code_dictionary("structure.json")),
+            counterparty_short_names_by_inn=cp_repo.get_short_names_by_inn(
+                session,
+                [_operation_counterparty_inn_for_income(operation) for operation in operations],
+            ),
         )
         if not rows:
             logger.info("Sheets: нет пригодных строк для листа безналичных доходов")
