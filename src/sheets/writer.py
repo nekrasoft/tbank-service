@@ -382,6 +382,27 @@ def _copy_cashless_validation_columns(
     )
 
 
+def _copy_cashless_formula_format_columns(
+    spreadsheet: Any,
+    worksheet: Any,
+    *,
+    source_row_1b: int,
+    destination_start_row_1b: int,
+    row_count: int,
+    col_indices: dict[str, int],
+) -> None:
+    _copy_cashless_columns(
+        spreadsheet,
+        worksheet,
+        headers=_CASHLESS_EXPENSE_FORMULA_HEADERS,
+        paste_type="PASTE_FORMAT",
+        source_row_1b=source_row_1b,
+        destination_start_row_1b=destination_start_row_1b,
+        row_count=row_count,
+        col_indices=col_indices,
+    )
+
+
 def append_cashless_expense_rows(
     rows: Iterable[dict[str, Any]],
     *,
@@ -393,7 +414,7 @@ def append_cashless_expense_rows(
 
     Дедупликация перед append выполняется по банковским колонкам:
     месяц, дата, сумма, контрагент, назначение платежа, расчетный счет.
-    Формулы в колонках КСП и КСЗ копируются из предыдущей строки листа.
+    Формулы и форматирование в колонках КСП и КСЗ копируются из предыдущей строки листа.
     Условия проверки данных в колонках Структура и Операция тоже копируются из предыдущей строки.
     """
     prepared_rows = list(rows)
@@ -469,6 +490,14 @@ def append_cashless_expense_rows(
         worksheet.append_rows(rows_to_append, value_input_option="USER_ENTERED")
         if previous_row_1b > header_row_idx + 1:
             _copy_cashless_formula_columns(
+                spreadsheet,
+                worksheet,
+                source_row_1b=previous_row_1b,
+                destination_start_row_1b=append_start_row_1b,
+                row_count=len(rows_to_append),
+                col_indices=col_indices,
+            )
+            _copy_cashless_formula_format_columns(
                 spreadsheet,
                 worksheet,
                 source_row_1b=previous_row_1b,
