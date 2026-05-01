@@ -191,6 +191,7 @@ class TBankStatementOperation(Base):
     counterparty_inn = Column(String(12), nullable=True)
     counterparty_account = Column(String(32), nullable=True)
     is_incoming = Column(Boolean, nullable=False, default=False)
+    cashless_expense_sheet_synced_at = Column(DateTime, nullable=True)
     matched_invoice_id = Column(Integer, ForeignKey("invoices.id", ondelete="SET NULL"), nullable=True)
     match_confidence = Column(Numeric(5, 4), nullable=True)
     match_method = Column(String(64), nullable=True)
@@ -203,6 +204,12 @@ class TBankStatementOperation(Base):
     __table_args__ = (
         Index("ix_tbank_statement_ops_unmatched", "matched_invoice_id", "is_incoming"),
         Index("ix_tbank_statement_ops_account_operation_date", "account_number", "operation_date"),
+        Index(
+            "ix_tbank_statement_ops_expense_sheet_sync",
+            "is_incoming",
+            "cashless_expense_sheet_synced_at",
+            "operation_date",
+        ),
     )
 
 

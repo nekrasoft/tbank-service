@@ -1,6 +1,7 @@
 {
   "google_sheet_url": "",
   "google_counterparties_sheet_name": "Контрагенты",
+  "google_cashless_expenses_sheet_name": "Безнал-Расходы",
   "google_sheet_columns": [
     "№",
     "Месяц",

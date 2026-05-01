@@ -83,6 +83,10 @@ python3 -m src.cli.import_counterparties_to_bitrix24
   - каждая операция сохраняется в `tbank_statement_operations` (нормализованные поля + `raw_payload`);
   - дедупликация по `dedupe_key` (`account_number + operationId`, либо fallback hash).
 - Для каждого счета в `TBANK_STATEMENT_ACCOUNT_NUMBERS` хранится состояние синка в `tbank_statement_sync_state`.
+- Исходящие операции дополнительно выгружаются в Google Sheets во вкладку `Безнал-Расходы`.
+  Повторная выгрузка контролируется полем `cashless_expense_sheet_synced_at` в `tbank_statement_operations`;
+  перед добавлением cron сверяет уже существующие строки по банковским колонкам, чтобы не дублировать ручные строки.
+  Автоматически заполняются банковские поля; `Объект`, `Подразделение` и `Статья затрат` остаются пустыми для аналитической разметки.
 - Для счетов в `invoices` добавлены агрегаты оплаты:
   - `paid_amount` — суммарно зачтенные входящие платежи;
   - `paid_at` — дата закрытия счета (когда сумма достигла total).
@@ -106,6 +110,13 @@ TBANK_STATEMENT_INITIAL_LOOKBACK_DAYS=90
 TBANK_STATEMENT_OVERLAP_MINUTES=180
 TBANK_STATEMENT_PAGE_LIMIT=200
 TBANK_STATEMENT_UNMATCHED_LIMIT=5000
+GOOGLE_CASHLESS_EXPENSES_SHEET_NAME=Безнал-Расходы
+GOOGLE_CASHLESS_EXPENSE_SYNC_LIMIT=5000
+TBANK_STATEMENT_DEFAULT_ACCOUNT_LABEL=Благосервис ТБанк
+# опционально для нескольких счетов:
+# TBANK_STATEMENT_ACCOUNT_LABELS=4070...=Благосервис ТБанк,4080...=Благосервис Сбер
+# опционально для первого бэкфилла:
+# GOOGLE_CASHLESS_EXPENSE_SYNC_FROM_DATE=2026-01-01
 ```
 
 ## Напоминания О Просрочке Оплаты
