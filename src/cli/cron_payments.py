@@ -390,6 +390,21 @@ def _cashless_rule_contains_any(normalized_text: str, patterns: Any) -> bool:
     return False
 
 
+def _cashless_expense_fallback_rule_result(
+    rule: dict[str, Any],
+    *,
+    default_structure_code: str,
+    structure_by_code: dict[str, str],
+    operation_by_code: dict[str, str],
+) -> tuple[str, str]:
+    structure_code = str(rule.get("structure_code") or default_structure_code).strip()
+    operation_code = str(rule.get("operation_code") or "").strip()
+    return (
+        structure_by_code.get(structure_code, ""),
+        operation_by_code.get(operation_code, ""),
+    )
+
+
 def _match_cashless_expense_fallback_rule(
     pay_purpose: str,
     counterparty: str,
@@ -401,21 +416,26 @@ def _match_cashless_expense_fallback_rule(
     normalized_pay_purpose = _normalize_cashless_rule_text(pay_purpose)
     normalized_counterparty = _normalize_cashless_rule_text(counterparty)
     default_structure_code = str(fallback_rules.get("default_structure_code") or "").strip()
+    rules = fallback_rules.get("rules") or []
 
-    for rule in fallback_rules.get("rules") or []:
-        matched_pay_purpose = _cashless_rule_contains_any(normalized_pay_purpose, rule.get("contains_any"))
-        matched_counterparty = _cashless_rule_contains_any(
-            normalized_counterparty,
-            rule.get("counterparty_contains_any"),
-        )
-        if not (matched_pay_purpose or matched_counterparty):
+    for rule in rules:
+        if not _cashless_rule_contains_any(normalized_counterparty, rule.get("counterparty_contains_any")):
             continue
+        return _cashless_expense_fallback_rule_result(
+            rule,
+            default_structure_code=default_structure_code,
+            structure_by_code=structure_by_code,
+            operation_by_code=operation_by_code,
+        )
 
-        structure_code = str(rule.get("structure_code") or default_structure_code).strip()
-        operation_code = str(rule.get("operation_code") or "").strip()
-        return (
-            structure_by_code.get(structure_code, ""),
-            operation_by_code.get(operation_code, ""),
+    for rule in rules:
+        if not _cashless_rule_contains_any(normalized_pay_purpose, rule.get("contains_any")):
+            continue
+        return _cashless_expense_fallback_rule_result(
+            rule,
+            default_structure_code=default_structure_code,
+            structure_by_code=structure_by_code,
+            operation_by_code=operation_by_code,
         )
 
     return "", ""
@@ -441,9 +461,21 @@ def _parse_pay_purpose_analytics(
 
     structure_code = match.group(1)
     operation_code = match.group(2).lstrip("0") or "0"
+    structure_name = structure_by_code.get(structure_code, "")
+    operation_name = operation_by_code.get(operation_code, "")
+    if structure_name and operation_name:
+        return structure_name, operation_name
+
+    fallback_structure_name, fallback_operation_name = _match_cashless_expense_fallback_rule(
+        pay_purpose,
+        counterparty,
+        fallback_rules=fallback_rules,
+        structure_by_code=structure_by_code,
+        operation_by_code=operation_by_code,
+    )
     return (
-        structure_by_code.get(structure_code, ""),
-        operation_by_code.get(operation_code, ""),
+        structure_name or fallback_structure_name,
+        operation_name or fallback_operation_name,
     )
 
 
