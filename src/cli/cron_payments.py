@@ -58,6 +58,7 @@ _INVOICE_HINT_RE = re.compile(
 )
 _NON_ALNUM_RE = re.compile(r"[^0-9a-zа-яё]+", re.IGNORECASE)
 _PAY_PURPOSE_ANALYTICS_CODE_RE = re.compile(r"^\s*(\d{4})-(\d{2,4})-\d+\b")
+_RULE_NON_ALNUM_RE = re.compile(r"[^0-9a-zа-я]+", re.IGNORECASE)
 
 
 def _env_int(name: str, default: int, *, min_value: int | None = None, max_value: int | None = None) -> int:
@@ -346,15 +347,87 @@ def _load_code_dictionary(filename: str) -> dict[str, str]:
     return {str(code).strip(): str(name).strip() for code, name in raw.items() if str(code).strip()}
 
 
+def _load_cashless_expense_fallback_rules() -> dict[str, Any]:
+    path = CONFIG_DIR / "cashless_expense_fallback_rules.json"
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+    except FileNotFoundError:
+        logger.warning("Справочник %s не найден, fallback-аналитика расходов отключена", path)
+        return {"default_structure_code": "", "rules": []}
+
+    if not isinstance(raw, dict):
+        logger.warning("Справочник %s должен быть JSON object, fallback-аналитика расходов отключена", path)
+        return {"default_structure_code": "", "rules": []}
+
+    rules = raw.get("rules")
+    if not isinstance(rules, list):
+        logger.warning("В справочнике %s поле rules должно быть массивом", path)
+        rules = []
+
+    return {
+        "default_structure_code": str(raw.get("default_structure_code") or "").strip(),
+        "rules": [rule for rule in rules if isinstance(rule, dict)],
+    }
+
+
+def _normalize_cashless_rule_text(value: str | None) -> str:
+    normalized = str(value or "").lower().replace("ё", "е")
+    normalized = _RULE_NON_ALNUM_RE.sub(" ", normalized)
+    return f" {' '.join(normalized.split())} "
+
+
+def _match_cashless_expense_fallback_rule(
+    pay_purpose: str,
+    *,
+    fallback_rules: dict[str, Any],
+    structure_by_code: dict[str, str],
+    operation_by_code: dict[str, str],
+) -> tuple[str, str]:
+    normalized_pay_purpose = _normalize_cashless_rule_text(pay_purpose)
+    default_structure_code = str(fallback_rules.get("default_structure_code") or "").strip()
+
+    for rule in fallback_rules.get("rules") or []:
+        contains_any = rule.get("contains_any") or []
+        if isinstance(contains_any, str):
+            contains_any = [contains_any]
+        if not isinstance(contains_any, list):
+            continue
+
+        matched = False
+        for pattern in contains_any:
+            normalized_pattern = _normalize_cashless_rule_text(str(pattern))
+            if normalized_pattern.strip() and normalized_pattern in normalized_pay_purpose:
+                matched = True
+                break
+        if not matched:
+            continue
+
+        structure_code = str(rule.get("structure_code") or default_structure_code).strip()
+        operation_code = str(rule.get("operation_code") or "").strip()
+        return (
+            structure_by_code.get(structure_code, ""),
+            operation_by_code.get(operation_code, ""),
+        )
+
+    return "", ""
+
+
 def _parse_pay_purpose_analytics(
     pay_purpose: str,
     *,
     structure_by_code: dict[str, str],
     operation_by_code: dict[str, str],
+    fallback_rules: dict[str, Any],
 ) -> tuple[str, str]:
     match = _PAY_PURPOSE_ANALYTICS_CODE_RE.match(pay_purpose or "")
     if not match:
-        return "", ""
+        return _match_cashless_expense_fallback_rule(
+            pay_purpose,
+            fallback_rules=fallback_rules,
+            structure_by_code=structure_by_code,
+            operation_by_code=operation_by_code,
+        )
 
     structure_code = match.group(1)
     operation_code = match.group(2).lstrip("0") or "0"
@@ -1084,6 +1157,7 @@ def _build_cashless_expense_sheet_rows(
     account_labels: dict[str, str],
     structure_by_code: dict[str, str],
     operation_by_code: dict[str, str],
+    fallback_rules: dict[str, Any],
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for operation in operations:
@@ -1098,6 +1172,7 @@ def _build_cashless_expense_sheet_rows(
             pay_purpose,
             structure_by_code=structure_by_code,
             operation_by_code=operation_by_code,
+            fallback_rules=fallback_rules,
         )
         rows.append(
             {
@@ -1151,6 +1226,7 @@ def _sync_cashless_expenses_to_sheets(
             account_labels=_get_account_labels(),
             structure_by_code=_load_code_dictionary("structure.json"),
             operation_by_code=_load_code_dictionary("operation.json"),
+            fallback_rules=_load_cashless_expense_fallback_rules(),
         )
         if not rows:
             logger.info("Sheets: нет пригодных строк для листа безналичных расходов")

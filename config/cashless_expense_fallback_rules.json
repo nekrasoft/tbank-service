@@ -1,0 +1,91 @@
+{
+  "default_structure_code": "1202",
+  "rules": [
+    {
+      "name": "fuel_azs",
+      "contains_any": ["azs"],
+      "operation_code": "183"
+    },
+    {
+      "name": "fuel_oils",
+      "contains_any": ["dvizhenie avtomasla"],
+      "operation_code": "183"
+    },
+    {
+      "name": "bank_services",
+      "contains_any": [
+        "плата за пакет",
+        "плата за обслуживание счета",
+        "плата за предоставление услуги sms банк",
+        "погашение комиссии"
+      ],
+      "structure_code": "1200",
+      "operation_code": "178"
+    },
+    {
+      "name": "cashout_fee",
+      "contains_any": ["комиссия за вывод средств"],
+      "structure_code": "1200",
+      "operation_code": "159"
+    },
+    {
+      "name": "overdraft_principal",
+      "contains_any": [
+        "погашение основного долга",
+        "погашение разрешенного овердрафта"
+      ],
+      "structure_code": "1200",
+      "operation_code": "144"
+    },
+    {
+      "name": "overdraft_interest",
+      "contains_any": [
+        "плата за активный овердрафт",
+        "плата за использованный лимит овердрафта"
+      ],
+      "structure_code": "1200",
+      "operation_code": "145"
+    },
+    {
+      "name": "software",
+      "contains_any": ["bitrix24", "datumlib"],
+      "structure_code": "1200",
+      "operation_code": "167"
+    },
+    {
+      "name": "advertising",
+      "contains_any": ["avito", "ekoprint"],
+      "structure_code": "1200",
+      "operation_code": "180"
+    },
+    {
+      "name": "auto_repair_and_parts",
+      "contains_any": [
+        "shc kordiant",
+        "shinnyj centr",
+        "5 koles",
+        "pitstop",
+        "kamaz maz",
+        "agrotekhnika",
+        "tts altay",
+        "kaskadcentr",
+        "technogear",
+        "ip shabalin",
+        "ip kropotov",
+        "vypolnennye raboty po zakaz naryadu",
+        "выполненные работы по заказ наряду"
+      ],
+      "operation_code": "182"
+    },
+    {
+      "name": "transport_services",
+      "contains_any": ["trans mobil"],
+      "operation_code": "139"
+    },
+    {
+      "name": "household_card_expenses",
+      "contains_any": ["bufet", "tc altaj"],
+      "operation_code": "117"
+    }
+  ]
+}
