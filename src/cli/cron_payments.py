@@ -48,6 +48,7 @@ _DEFAULT_PAGE_LIMIT = 200
 _DEFAULT_UNMATCHED_LIMIT = 5000
 _DEFAULT_PAYMENT_THANK_EMAIL_LIMIT = 5000
 _DEFAULT_CASHLESS_EXPENSE_SYNC_LIMIT = 5000
+_DEFAULT_CASHLESS_INCOME_SYNC_LIMIT = 5000
 _DEFAULT_CASHLESS_ACCOUNT_LABEL = "Благосервис ТБанк"
 DEBUG_FORCE_EMAIL = (os.environ.get("DEBUG_FORCE_EMAIL") or "").strip() or None
 
@@ -127,6 +128,25 @@ def _parse_args() -> argparse.Namespace:
             "(YYYY-MM-DD или DD.MM.YYYY). Переопределяет GOOGLE_CASHLESS_EXPENSE_SYNC_FROM_DATE."
         ),
     )
+    parser.add_argument(
+        "--force-cashless-incomes",
+        action="store_true",
+        help=(
+            "Повторно выгрузить доходы в Sheets, игнорируя отметку "
+            "cashless_income_sheet_synced_at в БД. Дедупликация строк в листе сохраняется."
+        ),
+    )
+    parser.add_argument(
+        "--cashless-incomes-from-date",
+        "--incomes-from-date",
+        dest="cashless_incomes_from_date",
+        type=_parse_date_arg,
+        metavar="DATE",
+        help=(
+            "Нижняя дата операций для выгрузки доходов в Sheets "
+            "(YYYY-MM-DD или DD.MM.YYYY). Переопределяет GOOGLE_CASHLESS_INCOME_SYNC_FROM_DATE."
+        ),
+    )
     args = parser.parse_args()
     if args.dry_run_bitrix and not args.dry_run:
         parser.error("--dry-run-bitrix можно использовать только вместе с --dry-run")
@@ -189,10 +209,10 @@ def _account_label(account_number: str, labels: dict[str, str]) -> str:
     return labels.get(account_number, default_label)
 
 
-def _cashless_expense_sync_from(from_date: date | None = None) -> datetime | None:
+def _cashless_sheet_sync_from(from_date: date | None = None, *, env_name: str) -> datetime | None:
     parsed_day = from_date
     if parsed_day is None:
-        raw = (os.environ.get("GOOGLE_CASHLESS_EXPENSE_SYNC_FROM_DATE") or "").strip()
+        raw = (os.environ.get(env_name) or "").strip()
         if not raw:
             return None
 
@@ -205,13 +225,22 @@ def _cashless_expense_sync_from(from_date: date | None = None) -> datetime | Non
 
         if parsed_day is None:
             logger.warning(
-                "ENV GOOGLE_CASHLESS_EXPENSE_SYNC_FROM_DATE='%s' не дата YYYY-MM-DD/DD.MM.YYYY, фильтр отключен",
+                "ENV %s='%s' не дата YYYY-MM-DD/DD.MM.YYYY, фильтр отключен",
+                env_name,
                 raw,
             )
             return None
 
     from_utc, _ = _utc_naive_bounds_for_business_date(parsed_day)
     return from_utc
+
+
+def _cashless_expense_sync_from(from_date: date | None = None) -> datetime | None:
+    return _cashless_sheet_sync_from(from_date, env_name="GOOGLE_CASHLESS_EXPENSE_SYNC_FROM_DATE")
+
+
+def _cashless_income_sync_from(from_date: date | None = None) -> datetime | None:
+    return _cashless_sheet_sync_from(from_date, env_name="GOOGLE_CASHLESS_INCOME_SYNC_FROM_DATE")
 
 
 
@@ -327,6 +356,14 @@ def _operation_counterparty_for_expense(operation: Any) -> str:
     )
 
 
+def _operation_counterparty_for_income(operation: Any) -> str:
+    return (
+        str(operation.payer_name or "").strip()
+        or str(operation.counterparty_name or "").strip()
+        or str(operation.receiver_name or "").strip()
+    )
+
+
 def _operation_purpose_for_sheet(operation: Any) -> str:
     return str(operation.pay_purpose or "").strip() or str(operation.description or "").strip()
 
@@ -369,6 +406,21 @@ def _load_cashless_expense_fallback_rules() -> dict[str, Any]:
         "default_structure_code": str(raw.get("default_structure_code") or "").strip(),
         "rules": [rule for rule in rules if isinstance(rule, dict)],
     }
+
+
+def _default_cashless_structure_name(structure_by_code: dict[str, str]) -> str:
+    fallback_rules = _load_cashless_expense_fallback_rules()
+    structure_code = (
+        os.environ.get("GOOGLE_CASHLESS_DEFAULT_STRUCTURE_CODE", "").strip()
+        or str(fallback_rules.get("default_structure_code") or "").strip()
+    )
+    if not structure_code:
+        return ""
+
+    structure_name = structure_by_code.get(structure_code, "")
+    if not structure_name:
+        logger.warning("Код дефолтной структуры %s не найден в config/structure.json", structure_code)
+    return structure_name
 
 
 def _normalize_cashless_rule_text(value: str | None) -> str:
@@ -1299,6 +1351,98 @@ def _sync_cashless_expenses_to_sheets(
         session.close()
 
 
+def _build_cashless_income_sheet_rows(
+    operations: list[Any],
+    *,
+    account_labels: dict[str, str],
+    default_structure_name: str,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for operation in operations:
+        business_day = _cashless_operation_date(operation)
+        amount = _operation_amount_from_row(operation)
+        if business_day is None or amount <= 0:
+            continue
+
+        account_number = str(operation.account_number or "").strip()
+        rows.append(
+            {
+                "operation_row_id": int(operation.id),
+                "month": business_day.month,
+                "date": business_day.strftime("%d.%m.%Y"),
+                "amount": _format_money_ru(amount),
+                "counterparty": _operation_counterparty_for_income(operation),
+                "pay_purpose": _operation_purpose_for_sheet(operation),
+                "account_label": _account_label(account_number, account_labels),
+                "structure": default_structure_name,
+            }
+        )
+    return rows
+
+
+def _sync_cashless_incomes_to_sheets(
+    *,
+    limit: int,
+    force: bool = False,
+    from_date: date | None = None,
+) -> dict[str, int]:
+    from src.db.connection import get_session
+    from src.db.repos import statement_operations as st_ops_repo
+    from src.sheets.writer import append_cashless_income_rows
+
+    session = get_session()
+    try:
+        operations = st_ops_repo.get_unsynced_cashless_incomes(
+            session,
+            limit=limit,
+            operation_date_from=_cashless_income_sync_from(from_date),
+            include_synced=force,
+        )
+        stats = {
+            "candidates": len(operations),
+            "appended": 0,
+            "skipped_existing": 0,
+            "marked": 0,
+        }
+        if not operations:
+            logger.info(
+                "Sheets: нет входящих операций для листа безналичных доходов (force=%s)",
+                force,
+            )
+            return stats
+
+        rows = _build_cashless_income_sheet_rows(
+            operations,
+            account_labels=_get_account_labels(),
+            default_structure_name=_default_cashless_structure_name(_load_code_dictionary("structure.json")),
+        )
+        if not rows:
+            logger.info("Sheets: нет пригодных строк для листа безналичных доходов")
+            return stats
+
+        result = append_cashless_income_rows(rows)
+        processed_ids = [int(row_id) for row_id in result.get("processed_operation_ids", []) if row_id]
+        if processed_ids:
+            stats["marked"] = st_ops_repo.mark_cashless_incomes_sheet_synced(
+                session,
+                operation_ids=processed_ids,
+                synced_at=datetime.utcnow().replace(microsecond=0),
+                update_existing=force,
+            )
+            session.commit()
+        else:
+            session.rollback()
+
+        stats["appended"] = int(result.get("appended") or 0)
+        stats["skipped_existing"] = int(result.get("skipped_existing") or 0)
+        return stats
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
 
 def _run_matching(
     unmatched_limit: int,
@@ -1443,12 +1587,19 @@ def main() -> None:
         min_value=1,
         max_value=100_000,
     )
+    cashless_income_sync_limit = _env_int(
+        "GOOGLE_CASHLESS_INCOME_SYNC_LIMIT",
+        _DEFAULT_CASHLESS_INCOME_SYNC_LIMIT,
+        min_value=1,
+        max_value=100_000,
+    )
 
     logger.info(
         (
             "Запуск cron_payments accounts=%s initial_lookback_days=%s overlap_minutes=%s "
             "page_limit=%s payment_thank_email_limit=%s cashless_expense_sync_limit=%s "
-            "force_cashless_expenses=%s cashless_expenses_from_date=%s "
+            "cashless_income_sync_limit=%s force_cashless_expenses=%s cashless_expenses_from_date=%s "
+            "force_cashless_incomes=%s cashless_incomes_from_date=%s "
             "dry_run=%s dry_run_bitrix=%s"
         ),
         len(account_numbers),
@@ -1457,15 +1608,18 @@ def main() -> None:
         page_limit,
         payment_thank_email_limit,
         cashless_expense_sync_limit,
+        cashless_income_sync_limit,
         args.force_cashless_expenses,
         args.cashless_expenses_from_date.isoformat() if args.cashless_expenses_from_date else None,
+        args.force_cashless_incomes,
+        args.cashless_incomes_from_date.isoformat() if args.cashless_incomes_from_date else None,
         args.dry_run,
         args.dry_run_bitrix,
     )
 
     if args.dry_run:
         logger.warning(
-            "DRY-RUN: синк выписки и расходов в Sheets отключен; используем только текущие данные в БД"
+            "DRY-RUN: синк выписки, расходов и доходов в Sheets отключен; используем только текущие данные в БД"
         )
         matched_count, recalc_stats, newly_paid = _run_matching(
             unmatched_limit,
@@ -1482,7 +1636,7 @@ def main() -> None:
             logger.info(
                 "DRY-RUN: вызовы Bitrix24 отключены (используйте --dry-run --dry-run-bitrix)"
             )
-        logger.info("DRY-RUN: sync расходов в Sheets и thank-you email отключены")
+        logger.info("DRY-RUN: sync расходов/доходов в Sheets и thank-you email отключены")
 
         logger.info(
             (
@@ -1546,6 +1700,25 @@ def main() -> None:
         cashless_expense_stats["failed"] = 1
         logger.exception("Ошибка синхронизации расходов в Sheets")
 
+    cashless_income_stats = {
+        "candidates": 0,
+        "appended": 0,
+        "skipped_existing": 0,
+        "marked": 0,
+        "failed": 0,
+    }
+    try:
+        cashless_income_stats.update(
+            _sync_cashless_incomes_to_sheets(
+                limit=cashless_income_sync_limit,
+                force=args.force_cashless_incomes,
+                from_date=args.cashless_incomes_from_date,
+            )
+        )
+    except Exception:
+        cashless_income_stats["failed"] = 1
+        logger.exception("Ошибка синхронизации доходов в Sheets")
+
     matched_count, recalc_stats, _ = _run_matching(unmatched_limit)
     payment_thank_stats = _send_due_payment_thank_you_emails(limit=payment_thank_email_limit)
 
@@ -1554,6 +1727,7 @@ def main() -> None:
             "cron_payments завершен: fetched=%s created=%s matched=%s "
             "invoice_state_updates=%s (paid=%s partially_paid=%s issued=%s) "
             "cashless_expenses_candidates=%s appended=%s skipped_existing=%s marked=%s failed=%s "
+            "cashless_incomes_candidates=%s appended=%s skipped_existing=%s marked=%s failed=%s "
             "payment_thanks_candidates=%s sent=%s failed=%s skipped=%s"
         ),
         total_fetched,
@@ -1568,6 +1742,11 @@ def main() -> None:
         cashless_expense_stats.get("skipped_existing", 0),
         cashless_expense_stats.get("marked", 0),
         cashless_expense_stats.get("failed", 0),
+        cashless_income_stats.get("candidates", 0),
+        cashless_income_stats.get("appended", 0),
+        cashless_income_stats.get("skipped_existing", 0),
+        cashless_income_stats.get("marked", 0),
+        cashless_income_stats.get("failed", 0),
         payment_thank_stats.get("candidates", 0),
         payment_thank_stats.get("sent", 0),
         payment_thank_stats.get("failed", 0),

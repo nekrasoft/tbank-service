@@ -69,6 +69,8 @@ python3 -m src.cli.cron
 python3 -m src.cli.cron_payments
 # Повторно наполнить лист "Безнал-Расходы" из уже сохраненных операций, например после очистки вкладки
 python3 -m src.cli.cron_payments --force-cashless-expenses --cashless-expenses-from-date 2026-01-01
+# Повторно наполнить лист "Безнал-Доходы" из уже сохраненных операций
+python3 -m src.cli.cron_payments --force-cashless-incomes --cashless-incomes-from-date 2026-01-01
 
 # Cron напоминаний клиентам о просрочке оплаты (email)
 python3 -m src.cli.cron_invoice_reminders
@@ -93,9 +95,17 @@ python3 -m src.cli.import_counterparties_to_bitrix24
   а также формулы и форматирование `КСП` и `КСЗ` копируются из предыдущей строки.
 - Если явного кода нет, fallback-правила из `config/cashless_expense_fallback_rules.json`
   пытаются определить аналитику по повторяющимся фрагментам назначения платежа.
+- Входящие операции дополнительно выгружаются в Google Sheets во вкладку `Безнал-Доходы`.
+  Повторная выгрузка контролируется полем `cashless_income_sheet_synced_at`.
+  `Структура` заполняется дефолтным значением из `GOOGLE_CASHLESS_DEFAULT_STRUCTURE_CODE`
+  или `default_structure_code` в `config/cashless_expense_fallback_rules.json`; формула и форматирование
+  `КСП`, а также проверка данных `Структура` копируются из предыдущей строки.
 - Для повторной выгрузки расходов используйте `--force-cashless-expenses`; флаг игнорирует отметку
   `cashless_expense_sheet_synced_at`, но не отключает дедупликацию уже существующих строк в листе.
   Нижнюю дату можно задать через `--cashless-expenses-from-date YYYY-MM-DD` или `--from-date DD.MM.YYYY`.
+- Для повторной выгрузки доходов используйте `--force-cashless-incomes`; флаг игнорирует отметку
+  `cashless_income_sheet_synced_at`, но не отключает дедупликацию уже существующих строк в листе.
+  Нижнюю дату можно задать через `--cashless-incomes-from-date YYYY-MM-DD`.
 - Для счетов в `invoices` добавлены агрегаты оплаты:
   - `paid_amount` — суммарно зачтенные входящие платежи;
   - `paid_at` — дата закрытия счета (когда сумма достигла total).
@@ -120,12 +130,16 @@ TBANK_STATEMENT_OVERLAP_MINUTES=180
 TBANK_STATEMENT_PAGE_LIMIT=200
 TBANK_STATEMENT_UNMATCHED_LIMIT=5000
 GOOGLE_CASHLESS_EXPENSES_SHEET_NAME=Безнал-Расходы
+GOOGLE_CASHLESS_INCOMES_SHEET_NAME=Безнал-Доходы
 GOOGLE_CASHLESS_EXPENSE_SYNC_LIMIT=5000
+GOOGLE_CASHLESS_INCOME_SYNC_LIMIT=5000
+GOOGLE_CASHLESS_DEFAULT_STRUCTURE_CODE=1202
 TBANK_STATEMENT_DEFAULT_ACCOUNT_LABEL=Благосервис ТБанк
 # опционально для нескольких счетов:
 # TBANK_STATEMENT_ACCOUNT_LABELS=4070...=Благосервис ТБанк,4080...=Благосервис Сбер
 # опционально для первого бэкфилла:
 # GOOGLE_CASHLESS_EXPENSE_SYNC_FROM_DATE=2026-01-01
+# GOOGLE_CASHLESS_INCOME_SYNC_FROM_DATE=2026-01-01
 ```
 
 ## Напоминания О Просрочке Оплаты

@@ -223,3 +223,60 @@ def mark_cashless_expenses_sheet_synced(
         )
     )
     return int(result.rowcount or 0)
+
+
+def get_unsynced_cashless_incomes(
+    session: Session,
+    *,
+    limit: int | None = None,
+    operation_date_from: datetime | None = None,
+    include_synced: bool = False,
+) -> list[TBankStatementOperation]:
+    """Входящие Transaction-операции для выгрузки в лист безналичных доходов."""
+    stmt = (
+        select(TBankStatementOperation)
+        .where(TBankStatementOperation.is_incoming.is_(True))
+        .where(TBankStatementOperation.operation_date.is_not(None))
+        .where(TBankStatementOperation.operation_amount > Decimal("0.00"))
+        .where(
+            or_(
+                TBankStatementOperation.operation_status.is_(None),
+                TBankStatementOperation.operation_status == "Transaction",
+            )
+        )
+        .order_by(TBankStatementOperation.operation_date.asc(), TBankStatementOperation.id.asc())
+    )
+    if not include_synced:
+        stmt = stmt.where(TBankStatementOperation.cashless_income_sheet_synced_at.is_(None))
+    if operation_date_from is not None:
+        stmt = stmt.where(TBankStatementOperation.operation_date >= operation_date_from)
+    if limit is not None and limit > 0:
+        stmt = stmt.limit(limit)
+
+    result = session.execute(stmt)
+    return list(result.scalars().all())
+
+
+def mark_cashless_incomes_sheet_synced(
+    session: Session,
+    *,
+    operation_ids: list[int],
+    synced_at: datetime,
+    update_existing: bool = False,
+) -> int:
+    """Отметить входящие операции как обработанные для листа безналичных доходов."""
+    ids = [int(operation_id) for operation_id in operation_ids if operation_id]
+    if not ids:
+        return 0
+
+    stmt = update(TBankStatementOperation).where(TBankStatementOperation.id.in_(ids))
+    if not update_existing:
+        stmt = stmt.where(TBankStatementOperation.cashless_income_sheet_synced_at.is_(None))
+
+    result = session.execute(
+        stmt.values(
+            cashless_income_sheet_synced_at=synced_at,
+            updated_at=datetime.utcnow(),
+        )
+    )
+    return int(result.rowcount or 0)
