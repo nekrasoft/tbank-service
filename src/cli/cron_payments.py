@@ -403,17 +403,17 @@ def _load_cashless_expense_fallback_rules() -> dict[str, Any]:
         rules = []
 
     return {
-        "default_structure_code": str(raw.get("default_structure_code") or "").strip(),
+        "default_structure_code": (
+            os.environ.get("GOOGLE_CASHLESS_DEFAULT_STRUCTURE_CODE", "").strip()
+            or str(raw.get("default_structure_code") or "").strip()
+        ),
         "rules": [rule for rule in rules if isinstance(rule, dict)],
     }
 
 
 def _default_cashless_structure_name(structure_by_code: dict[str, str]) -> str:
     fallback_rules = _load_cashless_expense_fallback_rules()
-    structure_code = (
-        os.environ.get("GOOGLE_CASHLESS_DEFAULT_STRUCTURE_CODE", "").strip()
-        or str(fallback_rules.get("default_structure_code") or "").strip()
-    )
+    structure_code = str(fallback_rules.get("default_structure_code") or "").strip()
     if not structure_code:
         return ""
 
