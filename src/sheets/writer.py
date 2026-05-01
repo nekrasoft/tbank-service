@@ -36,11 +36,10 @@ _CASHLESS_EXPENSE_HEADERS = [
     "Контрагент",
     "Назначение платежа",
     "Расчетный счет",
-    "Объект",
-    "Подразделение",
-    "Статья затрат",
-    "Подразделение",
-    "Статья затрат",
+    "Структура",
+    "КСП",
+    "Операция",
+    "КСЗ",
 ]
 _CASHLESS_EXPENSE_KEY_HEADERS = [
     "Месяц",
@@ -50,6 +49,7 @@ _CASHLESS_EXPENSE_KEY_HEADERS = [
     "Назначение платежа",
     "Расчетный счет",
 ]
+_CASHLESS_EXPENSE_FORMULA_HEADERS = ["КСП", "КСЗ"]
 _MONEY_Q = Decimal("0.01")
 
 
@@ -256,20 +256,25 @@ def _cashless_expense_key_from_sheet_row(row: list[Any], col_indices: dict[str, 
     )
 
 
-def _cashless_expense_values(row: dict[str, Any]) -> list[Any]:
-    return [
-        row.get("month", ""),
-        row.get("date", ""),
-        row.get("amount", ""),
-        row.get("counterparty", ""),
-        row.get("pay_purpose", ""),
-        row.get("account_label", ""),
-        row.get("object", ""),
-        row.get("department", ""),
-        row.get("cost_article", ""),
-        row.get("department_2", ""),
-        row.get("cost_article_2", ""),
-    ]
+def _cashless_expense_values(row: dict[str, Any], col_indices: dict[str, int]) -> list[Any]:
+    values = [""] * (max(col_indices.values()) + 1)
+    by_header = {
+        "Месяц": row.get("month", ""),
+        "Дата": row.get("date", ""),
+        "Сумма": row.get("amount", ""),
+        "Контрагент": row.get("counterparty", ""),
+        "Назначение платежа": row.get("pay_purpose", ""),
+        "Расчетный счет": row.get("account_label", ""),
+        "Структура": row.get("structure", ""),
+        "КСП": "",
+        "Операция": row.get("operation", ""),
+        "КСЗ": "",
+    }
+    for header, value in by_header.items():
+        idx = col_indices.get(header)
+        if idx is not None:
+            values[idx] = value
+    return values
 
 
 def _cashless_expense_key_from_row(row: dict[str, Any]) -> tuple[str, str, str, str, str, str]:
@@ -283,6 +288,55 @@ def _cashless_expense_key_from_row(row: dict[str, Any]) -> tuple[str, str, str, 
     )
 
 
+def _copy_cashless_formula_columns(
+    spreadsheet: Any,
+    worksheet: Any,
+    *,
+    source_row_1b: int,
+    destination_start_row_1b: int,
+    row_count: int,
+    col_indices: dict[str, int],
+) -> None:
+    if row_count <= 0:
+        return
+
+    header_indices = [col_indices[h] for h in _CASHLESS_EXPENSE_FORMULA_HEADERS if h in col_indices]
+    if not header_indices:
+        return
+
+    worksheet_sheet_id = int(
+        getattr(worksheet, "id", None)
+        or getattr(worksheet, "_properties", {}).get("sheetId")
+    )
+    requests = []
+    for col_idx in header_indices:
+        requests.append(
+            {
+                "copyPaste": {
+                    "source": {
+                        "sheetId": worksheet_sheet_id,
+                        "startRowIndex": source_row_1b - 1,
+                        "endRowIndex": source_row_1b,
+                        "startColumnIndex": col_idx,
+                        "endColumnIndex": col_idx + 1,
+                    },
+                    "destination": {
+                        "sheetId": worksheet_sheet_id,
+                        "startRowIndex": destination_start_row_1b - 1,
+                        "endRowIndex": destination_start_row_1b - 1 + row_count,
+                        "startColumnIndex": col_idx,
+                        "endColumnIndex": col_idx + 1,
+                    },
+                    "pasteType": "PASTE_FORMULA",
+                    "pasteOrientation": "NORMAL",
+                }
+            }
+        )
+
+    if requests:
+        spreadsheet.batch_update({"requests": requests})
+
+
 def append_cashless_expense_rows(
     rows: Iterable[dict[str, Any]],
     *,
@@ -294,6 +348,7 @@ def append_cashless_expense_rows(
 
     Дедупликация перед append выполняется по банковским колонкам:
     месяц, дата, сумма, контрагент, назначение платежа, расчетный счет.
+    Формулы в колонках КСП и КСЗ копируются из предыдущей строки листа.
     """
     prepared_rows = list(rows)
     if not prepared_rows:
@@ -323,7 +378,7 @@ def append_cashless_expense_rows(
         logger.warning("Sheets: лист '%s' пуст, запись расходов пропущена", target_sheet_name)
         return {"appended": 0, "skipped_existing": 0, "processed_operation_ids": []}
 
-    header = _find_header_row(values, _CASHLESS_EXPENSE_KEY_HEADERS)
+    header = _find_header_row(values, _CASHLESS_EXPENSE_HEADERS)
     if header is None:
         logger.warning("Sheets: в листе '%s' не найдены заголовки расходов", target_sheet_name)
         return {"appended": 0, "skipped_existing": 0, "processed_operation_ids": []}
@@ -331,10 +386,10 @@ def append_cashless_expense_rows(
     header_row_idx, header_row = header
     col_indices: dict[str, int] = {}
     for idx, header_name in enumerate(header_row):
-        if header_name in _CASHLESS_EXPENSE_KEY_HEADERS and header_name not in col_indices:
+        if header_name in _CASHLESS_EXPENSE_HEADERS and header_name not in col_indices:
             col_indices[header_name] = idx
 
-    missing = [h for h in _CASHLESS_EXPENSE_KEY_HEADERS if h not in col_indices]
+    missing = [h for h in _CASHLESS_EXPENSE_HEADERS if h not in col_indices]
     if missing:
         logger.warning("Sheets: в листе '%s' не найдены колонки %s", target_sheet_name, missing)
         return {"appended": 0, "skipped_existing": 0, "processed_operation_ids": []}
@@ -358,12 +413,28 @@ def append_cashless_expense_rows(
                 skipped_ids.append(operation_row_id)
             continue
 
-        rows_to_append.append(_cashless_expense_values(row))
+        rows_to_append.append(_cashless_expense_values(row, col_indices))
         if operation_row_id:
             appended_ids.append(operation_row_id)
 
     if rows_to_append:
+        previous_row_1b = len(values)
+        append_start_row_1b = previous_row_1b + 1
         worksheet.append_rows(rows_to_append, value_input_option="USER_ENTERED")
+        if previous_row_1b > header_row_idx + 1:
+            _copy_cashless_formula_columns(
+                spreadsheet,
+                worksheet,
+                source_row_1b=previous_row_1b,
+                destination_start_row_1b=append_start_row_1b,
+                row_count=len(rows_to_append),
+                col_indices=col_indices,
+            )
+        else:
+            logger.warning(
+                "Sheets: лист '%s', формулы КСП/КСЗ не скопированы: нет предыдущей строки данных",
+                target_sheet_name,
+            )
 
     processed_ids = appended_ids + skipped_ids
     logger.info(

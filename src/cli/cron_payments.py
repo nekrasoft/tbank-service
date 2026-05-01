@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import logging
 import os
 import re
@@ -21,7 +22,9 @@ from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 # Загрузка .env
-_env = Path(__file__).resolve().parent.parent.parent / ".env"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+CONFIG_DIR = PROJECT_ROOT / "config"
+_env = PROJECT_ROOT / ".env"
 if _env.exists():
     from dotenv import load_dotenv
 
@@ -54,6 +57,7 @@ _INVOICE_HINT_RE = re.compile(
     re.IGNORECASE,
 )
 _NON_ALNUM_RE = re.compile(r"[^0-9a-zа-яё]+", re.IGNORECASE)
+_PAY_PURPOSE_ANALYTICS_CODE_RE = re.compile(r"^\s*(\d{4})-(\d{2,4})-\d+\b")
 
 
 def _env_int(name: str, default: int, *, min_value: int | None = None, max_value: int | None = None) -> int:
@@ -293,6 +297,40 @@ def _operation_counterparty_for_expense(operation: Any) -> str:
 
 def _operation_purpose_for_sheet(operation: Any) -> str:
     return str(operation.pay_purpose or "").strip() or str(operation.description or "").strip()
+
+
+def _load_code_dictionary(filename: str) -> dict[str, str]:
+    path = CONFIG_DIR / filename
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+    except FileNotFoundError:
+        logger.warning("Справочник %s не найден, аналитика расходов будет пустой", path)
+        return {}
+
+    if not isinstance(raw, dict):
+        logger.warning("Справочник %s должен быть JSON object, аналитика расходов будет пустой", path)
+        return {}
+
+    return {str(code).strip(): str(name).strip() for code, name in raw.items() if str(code).strip()}
+
+
+def _parse_pay_purpose_analytics(
+    pay_purpose: str,
+    *,
+    structure_by_code: dict[str, str],
+    operation_by_code: dict[str, str],
+) -> tuple[str, str]:
+    match = _PAY_PURPOSE_ANALYTICS_CODE_RE.match(pay_purpose or "")
+    if not match:
+        return "", ""
+
+    structure_code = match.group(1)
+    operation_code = match.group(2).lstrip("0") or "0"
+    return (
+        structure_by_code.get(structure_code, ""),
+        operation_by_code.get(operation_code, ""),
+    )
 
 
 def _cashless_operation_date(operation: Any) -> date | None:
@@ -1013,6 +1051,8 @@ def _build_cashless_expense_sheet_rows(
     operations: list[Any],
     *,
     account_labels: dict[str, str],
+    structure_by_code: dict[str, str],
+    operation_by_code: dict[str, str],
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for operation in operations:
@@ -1022,6 +1062,12 @@ def _build_cashless_expense_sheet_rows(
             continue
 
         account_number = str(operation.account_number or "").strip()
+        pay_purpose = _operation_purpose_for_sheet(operation)
+        structure_name, operation_name = _parse_pay_purpose_analytics(
+            pay_purpose,
+            structure_by_code=structure_by_code,
+            operation_by_code=operation_by_code,
+        )
         rows.append(
             {
                 "operation_row_id": int(operation.id),
@@ -1029,13 +1075,10 @@ def _build_cashless_expense_sheet_rows(
                 "date": business_day.strftime("%d.%m.%Y"),
                 "amount": _format_money_ru(amount),
                 "counterparty": _operation_counterparty_for_expense(operation),
-                "pay_purpose": _operation_purpose_for_sheet(operation),
+                "pay_purpose": pay_purpose,
                 "account_label": _account_label(account_number, account_labels),
-                "object": "",
-                "department": "",
-                "cost_article": "",
-                "department_2": "",
-                "cost_article_2": "",
+                "structure": structure_name,
+                "operation": operation_name,
             }
         )
     return rows
@@ -1066,6 +1109,8 @@ def _sync_cashless_expenses_to_sheets(*, limit: int) -> dict[str, int]:
         rows = _build_cashless_expense_sheet_rows(
             operations,
             account_labels=_get_account_labels(),
+            structure_by_code=_load_code_dictionary("structure.json"),
+            operation_by_code=_load_code_dictionary("operation.json"),
         )
         if not rows:
             logger.info("Sheets: нет пригодных строк для листа безналичных расходов")
