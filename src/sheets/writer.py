@@ -30,7 +30,7 @@ _REQUIRED_HEADERS = [
 
 _CASHLESS_EXPENSE_SHEET_NAME = "Безнал-Расходы"
 _CASHLESS_EXPENSE_HEADERS = [
-    "Месяц",
+    "Мес",
     "Дата",
     "Сумма",
     "Контрагент",
@@ -42,7 +42,7 @@ _CASHLESS_EXPENSE_HEADERS = [
     "КСЗ",
 ]
 _CASHLESS_EXPENSE_KEY_HEADERS = [
-    "Месяц",
+    "Мес",
     "Дата",
     "Сумма",
     "Контрагент",
@@ -228,13 +228,28 @@ def _normalize_sheet_money_key(value: Any) -> str:
     return str(parsed)
 
 
-def _find_header_row(values: list[list[Any]], required_headers: Iterable[str]) -> tuple[int, list[str]] | None:
+def _find_header_row(
+    values: list[list[Any]],
+    required_headers: Iterable[str],
+) -> tuple[int, list[str]] | None:
     required = set(required_headers)
     for idx, row in enumerate(values):
         cells = [str(c).strip() if c else "" for c in row]
         if required.issubset(set(cells)):
             return idx, cells
     return None
+
+
+def _header_col_indices(
+    header_row: list[str],
+    required_headers: Iterable[str],
+) -> dict[str, int]:
+    required = set(required_headers)
+    col_indices: dict[str, int] = {}
+    for idx, header_name in enumerate(header_row):
+        if header_name in required and header_name not in col_indices:
+            col_indices[header_name] = idx
+    return col_indices
 
 
 def _cashless_expense_key_from_values(
@@ -262,7 +277,7 @@ def _cashless_expense_key_from_sheet_row(row: list[Any], col_indices: dict[str, 
         return str(row[idx]).strip() if len(row) > idx and row[idx] is not None else ""
 
     return _cashless_expense_key_from_values(
-        month=_cell("Месяц"),
+        month=_cell("Мес"),
         date_str=_cell("Дата"),
         amount=_cell("Сумма"),
         counterparty=_cell("Контрагент"),
@@ -274,7 +289,7 @@ def _cashless_expense_key_from_sheet_row(row: list[Any], col_indices: dict[str, 
 def _cashless_expense_values(row: dict[str, Any], col_indices: dict[str, int]) -> list[Any]:
     values = [""] * (max(col_indices.values()) + 1)
     by_header = {
-        "Месяц": row.get("month", ""),
+        "Мес": row.get("month", ""),
         "Дата": row.get("date", ""),
         "Сумма": row.get("amount", ""),
         "Контрагент": row.get("counterparty", ""),
@@ -530,10 +545,7 @@ def append_cashless_expense_rows(
         return {"appended": 0, "skipped_existing": 0, "processed_operation_ids": []}
 
     header_row_idx, header_row = header
-    col_indices: dict[str, int] = {}
-    for idx, header_name in enumerate(header_row):
-        if header_name in _CASHLESS_EXPENSE_HEADERS and header_name not in col_indices:
-            col_indices[header_name] = idx
+    col_indices = _header_col_indices(header_row, _CASHLESS_EXPENSE_HEADERS)
 
     missing = [h for h in _CASHLESS_EXPENSE_HEADERS if h not in col_indices]
     if missing:
@@ -660,10 +672,7 @@ def append_cashless_income_rows(
         return {"appended": 0, "skipped_existing": 0, "processed_operation_ids": []}
 
     header_row_idx, header_row = header
-    col_indices: dict[str, int] = {}
-    for idx, header_name in enumerate(header_row):
-        if header_name in _CASHLESS_INCOME_HEADERS and header_name not in col_indices:
-            col_indices[header_name] = idx
+    col_indices = _header_col_indices(header_row, _CASHLESS_INCOME_HEADERS)
 
     missing = [h for h in _CASHLESS_INCOME_HEADERS if h not in col_indices]
     if missing:
