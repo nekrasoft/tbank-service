@@ -50,6 +50,7 @@ _CASHLESS_EXPENSE_KEY_HEADERS = [
     "Расчетный счет",
 ]
 _CASHLESS_EXPENSE_FORMULA_HEADERS = ["КСП", "КСЗ"]
+_CASHLESS_EXPENSE_VALIDATION_HEADERS = ["Структура", "Операция"]
 _MONEY_Q = Decimal("0.01")
 
 
@@ -288,10 +289,12 @@ def _cashless_expense_key_from_row(row: dict[str, Any]) -> tuple[str, str, str, 
     )
 
 
-def _copy_cashless_formula_columns(
+def _copy_cashless_columns(
     spreadsheet: Any,
     worksheet: Any,
     *,
+    headers: Iterable[str],
+    paste_type: str,
     source_row_1b: int,
     destination_start_row_1b: int,
     row_count: int,
@@ -300,7 +303,7 @@ def _copy_cashless_formula_columns(
     if row_count <= 0:
         return
 
-    header_indices = [col_indices[h] for h in _CASHLESS_EXPENSE_FORMULA_HEADERS if h in col_indices]
+    header_indices = [col_indices[h] for h in headers if h in col_indices]
     if not header_indices:
         return
 
@@ -327,7 +330,7 @@ def _copy_cashless_formula_columns(
                         "startColumnIndex": col_idx,
                         "endColumnIndex": col_idx + 1,
                     },
-                    "pasteType": "PASTE_FORMULA",
+                    "pasteType": paste_type,
                     "pasteOrientation": "NORMAL",
                 }
             }
@@ -335,6 +338,48 @@ def _copy_cashless_formula_columns(
 
     if requests:
         spreadsheet.batch_update({"requests": requests})
+
+
+def _copy_cashless_formula_columns(
+    spreadsheet: Any,
+    worksheet: Any,
+    *,
+    source_row_1b: int,
+    destination_start_row_1b: int,
+    row_count: int,
+    col_indices: dict[str, int],
+) -> None:
+    _copy_cashless_columns(
+        spreadsheet,
+        worksheet,
+        headers=_CASHLESS_EXPENSE_FORMULA_HEADERS,
+        paste_type="PASTE_FORMULA",
+        source_row_1b=source_row_1b,
+        destination_start_row_1b=destination_start_row_1b,
+        row_count=row_count,
+        col_indices=col_indices,
+    )
+
+
+def _copy_cashless_validation_columns(
+    spreadsheet: Any,
+    worksheet: Any,
+    *,
+    source_row_1b: int,
+    destination_start_row_1b: int,
+    row_count: int,
+    col_indices: dict[str, int],
+) -> None:
+    _copy_cashless_columns(
+        spreadsheet,
+        worksheet,
+        headers=_CASHLESS_EXPENSE_VALIDATION_HEADERS,
+        paste_type="PASTE_DATA_VALIDATION",
+        source_row_1b=source_row_1b,
+        destination_start_row_1b=destination_start_row_1b,
+        row_count=row_count,
+        col_indices=col_indices,
+    )
 
 
 def append_cashless_expense_rows(
@@ -349,6 +394,7 @@ def append_cashless_expense_rows(
     Дедупликация перед append выполняется по банковским колонкам:
     месяц, дата, сумма, контрагент, назначение платежа, расчетный счет.
     Формулы в колонках КСП и КСЗ копируются из предыдущей строки листа.
+    Условия проверки данных в колонках Структура и Операция тоже копируются из предыдущей строки.
     """
     prepared_rows = list(rows)
     if not prepared_rows:
@@ -430,9 +476,17 @@ def append_cashless_expense_rows(
                 row_count=len(rows_to_append),
                 col_indices=col_indices,
             )
+            _copy_cashless_validation_columns(
+                spreadsheet,
+                worksheet,
+                source_row_1b=previous_row_1b,
+                destination_start_row_1b=append_start_row_1b,
+                row_count=len(rows_to_append),
+                col_indices=col_indices,
+            )
         else:
             logger.warning(
-                "Sheets: лист '%s', формулы КСП/КСЗ не скопированы: нет предыдущей строки данных",
+                "Sheets: лист '%s', формулы и проверки данных не скопированы: нет предыдущей строки данных",
                 target_sheet_name,
             )
 

@@ -89,7 +89,8 @@ python3 -m src.cli.import_counterparties_to_bitrix24
   Повторная выгрузка контролируется полем `cashless_expense_sheet_synced_at` в `tbank_statement_operations`;
   перед добавлением cron сверяет уже существующие строки по банковским колонкам, чтобы не дублировать ручные строки.
   Если назначение платежа начинается с кода вида `1200-146-02`, cron заполняет `Структура` и `Операция`
-  по справочникам `config/structure.json` и `config/operation.json`; `КСП` и `КСЗ` копируются формулами из предыдущей строки.
+  по справочникам `config/structure.json` и `config/operation.json`; проверки данных для этих колонок,
+  а также формулы `КСП` и `КСЗ` копируются из предыдущей строки.
 - Для повторной выгрузки расходов используйте `--force-cashless-expenses`; флаг игнорирует отметку
   `cashless_expense_sheet_synced_at`, но не отключает дедупликацию уже существующих строк в листе.
   Нижнюю дату можно задать через `--cashless-expenses-from-date YYYY-MM-DD` или `--from-date DD.MM.YYYY`.
