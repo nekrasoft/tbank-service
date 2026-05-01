@@ -377,30 +377,38 @@ def _normalize_cashless_rule_text(value: str | None) -> str:
     return f" {' '.join(normalized.split())} "
 
 
+def _cashless_rule_contains_any(normalized_text: str, patterns: Any) -> bool:
+    if isinstance(patterns, str):
+        patterns = [patterns]
+    if not isinstance(patterns, list):
+        return False
+
+    for pattern in patterns:
+        normalized_pattern = _normalize_cashless_rule_text(str(pattern))
+        if normalized_pattern.strip() and normalized_pattern in normalized_text:
+            return True
+    return False
+
+
 def _match_cashless_expense_fallback_rule(
     pay_purpose: str,
+    counterparty: str,
     *,
     fallback_rules: dict[str, Any],
     structure_by_code: dict[str, str],
     operation_by_code: dict[str, str],
 ) -> tuple[str, str]:
     normalized_pay_purpose = _normalize_cashless_rule_text(pay_purpose)
+    normalized_counterparty = _normalize_cashless_rule_text(counterparty)
     default_structure_code = str(fallback_rules.get("default_structure_code") or "").strip()
 
     for rule in fallback_rules.get("rules") or []:
-        contains_any = rule.get("contains_any") or []
-        if isinstance(contains_any, str):
-            contains_any = [contains_any]
-        if not isinstance(contains_any, list):
-            continue
-
-        matched = False
-        for pattern in contains_any:
-            normalized_pattern = _normalize_cashless_rule_text(str(pattern))
-            if normalized_pattern.strip() and normalized_pattern in normalized_pay_purpose:
-                matched = True
-                break
-        if not matched:
+        matched_pay_purpose = _cashless_rule_contains_any(normalized_pay_purpose, rule.get("contains_any"))
+        matched_counterparty = _cashless_rule_contains_any(
+            normalized_counterparty,
+            rule.get("counterparty_contains_any"),
+        )
+        if not (matched_pay_purpose or matched_counterparty):
             continue
 
         structure_code = str(rule.get("structure_code") or default_structure_code).strip()
@@ -415,6 +423,7 @@ def _match_cashless_expense_fallback_rule(
 
 def _parse_pay_purpose_analytics(
     pay_purpose: str,
+    counterparty: str,
     *,
     structure_by_code: dict[str, str],
     operation_by_code: dict[str, str],
@@ -424,6 +433,7 @@ def _parse_pay_purpose_analytics(
     if not match:
         return _match_cashless_expense_fallback_rule(
             pay_purpose,
+            counterparty,
             fallback_rules=fallback_rules,
             structure_by_code=structure_by_code,
             operation_by_code=operation_by_code,
@@ -1168,8 +1178,10 @@ def _build_cashless_expense_sheet_rows(
 
         account_number = str(operation.account_number or "").strip()
         pay_purpose = _operation_purpose_for_sheet(operation)
+        counterparty = _operation_counterparty_for_expense(operation)
         structure_name, operation_name = _parse_pay_purpose_analytics(
             pay_purpose,
+            counterparty,
             structure_by_code=structure_by_code,
             operation_by_code=operation_by_code,
             fallback_rules=fallback_rules,
@@ -1180,7 +1192,7 @@ def _build_cashless_expense_sheet_rows(
                 "month": business_day.month,
                 "date": business_day.strftime("%d.%m.%Y"),
                 "amount": _format_money_ru(amount),
-                "counterparty": _operation_counterparty_for_expense(operation),
+                "counterparty": counterparty,
                 "pay_purpose": pay_purpose,
                 "account_label": _account_label(account_number, account_labels),
                 "structure": structure_name,

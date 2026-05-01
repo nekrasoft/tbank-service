@@ -2,6 +2,16 @@
   "default_structure_code": "1202",
   "rules": [
     {
+      "name": "landfill_counterparties",
+      "counterparty_contains_any": [
+        "ип зеленцов",
+        "ооо гринкод",
+        "новый экогород",
+        "ремжилсервис"
+      ],
+      "operation_code": "185"
+    },
+    {
       "name": "fuel_azs",
       "contains_any": ["azs"],
       "operation_code": "183"
