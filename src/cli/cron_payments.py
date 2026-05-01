@@ -666,15 +666,28 @@ def _normalize_operation(raw_op: dict[str, Any], *, default_account_number: str)
     }
 
 
+def _operation_window_datetime_with_field(operation_data: dict[str, Any]) -> tuple[str | None, datetime | None]:
+    for field_name in (
+        "operation_date",
+        "charge_date",
+        "draw_date",
+        "trxn_post_date",
+        "authorization_date",
+        "doc_date",
+    ):
+        value = operation_data.get(field_name)
+        if value is not None:
+            return field_name, value
+    return None, None
+
+
 def _operation_window_datetime(operation_data: dict[str, Any]) -> datetime | None:
-    return (
-        operation_data.get("operation_date")
-        or operation_data.get("charge_date")
-        or operation_data.get("draw_date")
-        or operation_data.get("trxn_post_date")
-        or operation_data.get("authorization_date")
-        or operation_data.get("doc_date")
-    )
+    _, value = _operation_window_datetime_with_field(operation_data)
+    return value
+
+
+def _dt_log(value: datetime | None) -> str | None:
+    return value.isoformat() if value else None
 
 
 def _is_operation_in_window(
@@ -1268,6 +1281,30 @@ def _sync_statement_for_account(
                 fetched += 1
                 if not _is_operation_in_window(op_data, from_utc=from_utc, to_utc=to_utc):
                     skipped_out_of_window += 1
+                    if statement_date is not None and skipped_out_of_window <= 20:
+                        date_field, date_value = _operation_window_datetime_with_field(op_data)
+                        logger.info(
+                            (
+                                "Ручной синк: операция вне локального окна account=%s "
+                                "operation_id=%s date_field=%s date_value=%s "
+                                "operation_date=%s charge_date=%s draw_date=%s "
+                                "trxn_post_date=%s authorization_date=%s doc_date=%s "
+                                "amount=%s status=%s type=%s"
+                            ),
+                            account_number,
+                            op_data.get("operation_id"),
+                            date_field,
+                            _dt_log(_to_utc_aware(date_value)),
+                            _dt_log(op_data.get("operation_date")),
+                            _dt_log(op_data.get("charge_date")),
+                            _dt_log(op_data.get("draw_date")),
+                            _dt_log(op_data.get("trxn_post_date")),
+                            _dt_log(op_data.get("authorization_date")),
+                            _dt_log(op_data.get("doc_date")),
+                            op_data.get("operation_amount"),
+                            op_data.get("operation_status"),
+                            op_data.get("type_of_operation"),
+                        )
                     continue
                 _, is_created = st_ops_repo.upsert_operation(
                     session,
