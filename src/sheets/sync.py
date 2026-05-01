@@ -17,6 +17,32 @@ from src.sheets.reader import read_counterparties, read_works
 
 logger = logging.getLogger(__name__)
 _VALID_INN_LENGTHS = {10, 12}
+_BOOL_TRUE_VALUES = {
+    "1",
+    "true",
+    "yes",
+    "y",
+    "да",
+    "д",
+    "on",
+    "+",
+    "вкл",
+    "включено",
+    "enabled",
+}
+_BOOL_FALSE_VALUES = {
+    "0",
+    "false",
+    "no",
+    "n",
+    "нет",
+    "н",
+    "off",
+    "-",
+    "выкл",
+    "выключено",
+    "disabled",
+}
 
 
 def _parse_date(date_str: str) -> date | None:
@@ -93,6 +119,24 @@ def _normalize_email_list(value: str | None) -> str:
     return ", ".join(parts)
 
 
+def _parse_optional_bool(value) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    raw = str(value or "").strip().lower().replace("ё", "е")
+    if not raw:
+        return None
+    if raw in _BOOL_TRUE_VALUES:
+        return True
+    if raw in _BOOL_FALSE_VALUES:
+        return False
+    try:
+        return int(raw) != 0
+    except ValueError:
+        return None
+
+
 def _sync_counterparties_rows(session: Session, rows: list[dict]) -> tuple[int, int, int]:
     """
     Upsert контрагентов в counterparties по данным из Sheets.
@@ -111,6 +155,7 @@ def _sync_counterparties_rows(session: Session, rows: list[dict]) -> tuple[int, 
         raw_email = str(row.get("email", "") or "").strip()
         raw_email_accountant = str(row.get("email_accountant", "") or "").strip()
         raw_contract = str(row.get("contract", "") or "").strip()
+        raw_payment_reminders_enabled = row.get("payment_reminders_enabled", "")
 
         inn = _normalize_inn(raw_inn)
         if not inn:
@@ -142,6 +187,13 @@ def _sync_counterparties_rows(session: Session, rows: list[dict]) -> tuple[int, 
         email = _normalize_email_list(raw_email)
         email_accountant = _normalize_email_list(raw_email_accountant)
         contract = raw_contract
+        payment_reminders_enabled = _parse_optional_bool(raw_payment_reminders_enabled)
+        if str(raw_payment_reminders_enabled or "").strip() and payment_reminders_enabled is None:
+            logger.warning(
+                "Синхронизация контрагентов: не удалось распарсить payment_reminders_enabled='%s' для ИНН %s, значение не меняем",
+                raw_payment_reminders_enabled,
+                inn,
+            )
 
         by_inn = cp_repo.get_by_inn(session, inn)
         by_short_name = cp_repo.get_by_short_name(session, raw_short_name, "")
@@ -167,6 +219,11 @@ def _sync_counterparties_rows(session: Session, rows: list[dict]) -> tuple[int, 
                 kpp=kpp,
                 email=email,
                 email_accountant=email_accountant,
+                payment_reminders_enabled=(
+                    payment_reminders_enabled
+                    if payment_reminders_enabled is not None
+                    else True
+                ),
                 contract=contract,
             )
             created += 1
@@ -193,6 +250,12 @@ def _sync_counterparties_rows(session: Session, rows: list[dict]) -> tuple[int, 
             changed = True
         if (cp.contract or "") != contract:
             cp.contract = contract or None
+            changed = True
+        if (
+            payment_reminders_enabled is not None
+            and bool(cp.payment_reminders_enabled) != payment_reminders_enabled
+        ):
+            cp.payment_reminders_enabled = payment_reminders_enabled
             changed = True
 
         if changed:
