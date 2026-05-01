@@ -117,6 +117,18 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--statement-date",
+        "--statement-for-date",
+        dest="statement_date",
+        type=_parse_date_arg,
+        metavar="DATE",
+        help=(
+            "Запросить выписку T-Bank за конкретный бизнес-день "
+            "(YYYY-MM-DD или DD.MM.YYYY), игнорируя last_success_at. "
+            "Состояние обычного инкрементального синка не обновляется."
+        ),
+    )
+    parser.add_argument(
         "--cashless-expenses-from-date",
         "--expenses-from-date",
         "--from-date",
@@ -150,6 +162,8 @@ def _parse_args() -> argparse.Namespace:
     args = parser.parse_args()
     if args.dry_run_bitrix and not args.dry_run:
         parser.error("--dry-run-bitrix можно использовать только вместе с --dry-run")
+    if args.dry_run and args.statement_date:
+        parser.error("--statement-date нельзя использовать вместе с --dry-run: dry-run не запрашивает T-Bank")
     return args
 
 
@@ -1155,6 +1169,7 @@ def _sync_statement_for_account(
     initial_lookback_days: int,
     overlap_minutes: int,
     page_limit: int,
+    statement_date: date | None = None,
 ) -> tuple[int, int]:
     from src.db.connection import get_session
     from src.db.repos import statement_operations as st_ops_repo
@@ -1163,20 +1178,38 @@ def _sync_statement_for_account(
     now_utc = datetime.now(timezone.utc).replace(microsecond=0)
     session = get_session()
     try:
-        state = st_ops_repo.get_or_create_sync_state(session, account_number=account_number)
-        session.flush()
+        if statement_date is not None:
+            business_today = _business_today()
+            if statement_date > business_today:
+                raise ValueError(
+                    f"--statement-date={statement_date.isoformat()} находится в будущем "
+                    f"для бизнес-таймзоны {_get_business_timezone()}"
+                )
 
-        if state.last_success_at:
-            from_utc = _to_utc_aware(state.last_success_at) - timedelta(minutes=overlap_minutes)
+            from_naive, to_naive = _utc_naive_bounds_for_business_date(statement_date)
+            from_utc = _to_utc_aware(from_naive)
+            to_utc = _to_utc_aware(to_naive)
+            if statement_date == business_today and to_utc and to_utc > now_utc:
+                to_utc = now_utc
+            sync_mode = f"manual-date:{statement_date.isoformat()}"
         else:
-            from_utc = now_utc - timedelta(days=initial_lookback_days)
-        to_utc = now_utc
+            state = st_ops_repo.get_or_create_sync_state(session, account_number=account_number)
+            session.flush()
+
+            if state.last_success_at:
+                from_utc = _to_utc_aware(state.last_success_at) - timedelta(minutes=overlap_minutes)
+            else:
+                from_utc = now_utc - timedelta(days=initial_lookback_days)
+            to_utc = now_utc
+            sync_mode = "incremental"
+
         if from_utc >= to_utc:
             from_utc = to_utc - timedelta(minutes=max(5, overlap_minutes))
 
         logger.info(
-            "Синк выписки account=%s from=%s to=%s",
+            "Синк выписки account=%s mode=%s from=%s to=%s",
             account_number,
+            sync_mode,
             from_utc.isoformat(),
             to_utc.isoformat(),
         )
@@ -1233,14 +1266,21 @@ def _sync_statement_for_account(
             cursor = next_cursor
             time.sleep(TBANK_DELAY_SEC)
 
-        st_ops_repo.update_sync_state(
-            session,
-            account_number=account_number,
-            last_from=_to_utc_naive(from_utc),
-            last_to=_to_utc_naive(to_utc),
-            last_success_at=_to_utc_naive(to_utc),
-        )
-        session.commit()
+        if statement_date is None:
+            st_ops_repo.update_sync_state(
+                session,
+                account_number=account_number,
+                last_from=_to_utc_naive(from_utc),
+                last_to=_to_utc_naive(to_utc),
+                last_success_at=_to_utc_naive(to_utc),
+            )
+            session.commit()
+        else:
+            logger.info(
+                "Ручной синк выписки account=%s date=%s завершен без обновления last_success_at",
+                account_number,
+                statement_date.isoformat(),
+            )
         return fetched, created
     except Exception:
         session.rollback()
@@ -1609,7 +1649,7 @@ def main() -> None:
     logger.info(
         (
             "Запуск cron_payments accounts=%s initial_lookback_days=%s overlap_minutes=%s "
-            "page_limit=%s payment_thank_email_limit=%s cashless_expense_sync_limit=%s "
+            "page_limit=%s statement_date=%s payment_thank_email_limit=%s cashless_expense_sync_limit=%s "
             "cashless_income_sync_limit=%s force_cashless_expenses=%s cashless_expenses_from_date=%s "
             "force_cashless_incomes=%s cashless_incomes_from_date=%s "
             "dry_run=%s dry_run_bitrix=%s"
@@ -1618,6 +1658,7 @@ def main() -> None:
         initial_lookback_days,
         overlap_minutes,
         page_limit,
+        args.statement_date.isoformat() if args.statement_date else None,
         payment_thank_email_limit,
         cashless_expense_sync_limit,
         cashless_income_sync_limit,
@@ -1676,6 +1717,7 @@ def main() -> None:
                 initial_lookback_days=initial_lookback_days,
                 overlap_minutes=overlap_minutes,
                 page_limit=page_limit,
+                statement_date=args.statement_date,
             )
             total_fetched += fetched
             total_created += created
