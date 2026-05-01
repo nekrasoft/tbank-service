@@ -173,12 +173,12 @@ def get_unsynced_cashless_expenses(
     *,
     limit: int | None = None,
     operation_date_from: datetime | None = None,
+    include_synced: bool = False,
 ) -> list[TBankStatementOperation]:
-    """Исходящие Transaction-операции, еще не выгруженные в лист безналичных расходов."""
+    """Исходящие Transaction-операции для выгрузки в лист безналичных расходов."""
     stmt = (
         select(TBankStatementOperation)
         .where(TBankStatementOperation.is_incoming.is_(False))
-        .where(TBankStatementOperation.cashless_expense_sheet_synced_at.is_(None))
         .where(TBankStatementOperation.operation_date.is_not(None))
         .where(TBankStatementOperation.operation_amount > Decimal("0.00"))
         .where(
@@ -189,6 +189,8 @@ def get_unsynced_cashless_expenses(
         )
         .order_by(TBankStatementOperation.operation_date.asc(), TBankStatementOperation.id.asc())
     )
+    if not include_synced:
+        stmt = stmt.where(TBankStatementOperation.cashless_expense_sheet_synced_at.is_(None))
     if operation_date_from is not None:
         stmt = stmt.where(TBankStatementOperation.operation_date >= operation_date_from)
     if limit is not None and limit > 0:
@@ -203,17 +205,19 @@ def mark_cashless_expenses_sheet_synced(
     *,
     operation_ids: list[int],
     synced_at: datetime,
+    update_existing: bool = False,
 ) -> int:
     """Отметить исходящие операции как обработанные для листа безналичных расходов."""
     ids = [int(operation_id) for operation_id in operation_ids if operation_id]
     if not ids:
         return 0
 
+    stmt = update(TBankStatementOperation).where(TBankStatementOperation.id.in_(ids))
+    if not update_existing:
+        stmt = stmt.where(TBankStatementOperation.cashless_expense_sheet_synced_at.is_(None))
+
     result = session.execute(
-        update(TBankStatementOperation)
-        .where(TBankStatementOperation.id.in_(ids))
-        .where(TBankStatementOperation.cashless_expense_sheet_synced_at.is_(None))
-        .values(
+        stmt.values(
             cashless_expense_sheet_synced_at=synced_at,
             updated_at=datetime.utcnow(),
         )

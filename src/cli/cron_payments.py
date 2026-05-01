@@ -76,6 +76,16 @@ def _env_int(name: str, default: int, *, min_value: int | None = None, max_value
     return value
 
 
+def _parse_date_arg(value: str) -> date:
+    raw = str(value or "").strip()
+    for fmt in ("%Y-%m-%d", "%d.%m.%Y"):
+        try:
+            return datetime.strptime(raw, fmt).date()
+        except ValueError:
+            continue
+    raise argparse.ArgumentTypeError("ожидается дата YYYY-MM-DD или DD.MM.YYYY")
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Синк выписки T-Bank и автозачет оплат по invoices",
@@ -94,6 +104,26 @@ def _parse_args() -> argparse.Namespace:
         help=(
             "Вместе с --dry-run выполнить только Bitrix24-обновления "
             "для счетов, которые в этом прогоне стали бы paid"
+        ),
+    )
+    parser.add_argument(
+        "--force-cashless-expenses",
+        action="store_true",
+        help=(
+            "Повторно выгрузить расходы в Sheets, игнорируя отметку "
+            "cashless_expense_sheet_synced_at в БД. Дедупликация строк в листе сохраняется."
+        ),
+    )
+    parser.add_argument(
+        "--cashless-expenses-from-date",
+        "--expenses-from-date",
+        "--from-date",
+        dest="cashless_expenses_from_date",
+        type=_parse_date_arg,
+        metavar="DATE",
+        help=(
+            "Нижняя дата операций для выгрузки расходов в Sheets "
+            "(YYYY-MM-DD или DD.MM.YYYY). Переопределяет GOOGLE_CASHLESS_EXPENSE_SYNC_FROM_DATE."
         ),
     )
     args = parser.parse_args()
@@ -158,25 +188,26 @@ def _account_label(account_number: str, labels: dict[str, str]) -> str:
     return labels.get(account_number, default_label)
 
 
-def _cashless_expense_sync_from() -> datetime | None:
-    raw = (os.environ.get("GOOGLE_CASHLESS_EXPENSE_SYNC_FROM_DATE") or "").strip()
-    if not raw:
-        return None
-
-    parsed_day: date | None = None
-    for fmt in ("%Y-%m-%d", "%d.%m.%Y"):
-        try:
-            parsed_day = datetime.strptime(raw, fmt).date()
-            break
-        except ValueError:
-            continue
-
+def _cashless_expense_sync_from(from_date: date | None = None) -> datetime | None:
+    parsed_day = from_date
     if parsed_day is None:
-        logger.warning(
-            "ENV GOOGLE_CASHLESS_EXPENSE_SYNC_FROM_DATE='%s' не дата YYYY-MM-DD/DD.MM.YYYY, фильтр отключен",
-            raw,
-        )
-        return None
+        raw = (os.environ.get("GOOGLE_CASHLESS_EXPENSE_SYNC_FROM_DATE") or "").strip()
+        if not raw:
+            return None
+
+        for fmt in ("%Y-%m-%d", "%d.%m.%Y"):
+            try:
+                parsed_day = datetime.strptime(raw, fmt).date()
+                break
+            except ValueError:
+                continue
+
+        if parsed_day is None:
+            logger.warning(
+                "ENV GOOGLE_CASHLESS_EXPENSE_SYNC_FROM_DATE='%s' не дата YYYY-MM-DD/DD.MM.YYYY, фильтр отключен",
+                raw,
+            )
+            return None
 
     from_utc, _ = _utc_naive_bounds_for_business_date(parsed_day)
     return from_utc
@@ -1084,7 +1115,12 @@ def _build_cashless_expense_sheet_rows(
     return rows
 
 
-def _sync_cashless_expenses_to_sheets(*, limit: int) -> dict[str, int]:
+def _sync_cashless_expenses_to_sheets(
+    *,
+    limit: int,
+    force: bool = False,
+    from_date: date | None = None,
+) -> dict[str, int]:
     from src.db.connection import get_session
     from src.db.repos import statement_operations as st_ops_repo
     from src.sheets.writer import append_cashless_expense_rows
@@ -1094,7 +1130,8 @@ def _sync_cashless_expenses_to_sheets(*, limit: int) -> dict[str, int]:
         operations = st_ops_repo.get_unsynced_cashless_expenses(
             session,
             limit=limit,
-            operation_date_from=_cashless_expense_sync_from(),
+            operation_date_from=_cashless_expense_sync_from(from_date),
+            include_synced=force,
         )
         stats = {
             "candidates": len(operations),
@@ -1103,7 +1140,10 @@ def _sync_cashless_expenses_to_sheets(*, limit: int) -> dict[str, int]:
             "marked": 0,
         }
         if not operations:
-            logger.info("Sheets: нет новых исходящих операций для листа безналичных расходов")
+            logger.info(
+                "Sheets: нет исходящих операций для листа безналичных расходов (force=%s)",
+                force,
+            )
             return stats
 
         rows = _build_cashless_expense_sheet_rows(
@@ -1123,6 +1163,7 @@ def _sync_cashless_expenses_to_sheets(*, limit: int) -> dict[str, int]:
                 session,
                 operation_ids=processed_ids,
                 synced_at=datetime.utcnow().replace(microsecond=0),
+                update_existing=force,
             )
             session.commit()
         else:
@@ -1287,6 +1328,7 @@ def main() -> None:
         (
             "Запуск cron_payments accounts=%s initial_lookback_days=%s overlap_minutes=%s "
             "page_limit=%s payment_thank_email_limit=%s cashless_expense_sync_limit=%s "
+            "force_cashless_expenses=%s cashless_expenses_from_date=%s "
             "dry_run=%s dry_run_bitrix=%s"
         ),
         len(account_numbers),
@@ -1295,13 +1337,15 @@ def main() -> None:
         page_limit,
         payment_thank_email_limit,
         cashless_expense_sync_limit,
+        args.force_cashless_expenses,
+        args.cashless_expenses_from_date.isoformat() if args.cashless_expenses_from_date else None,
         args.dry_run,
         args.dry_run_bitrix,
     )
 
     if args.dry_run:
         logger.warning(
-            "DRY-RUN: синк выписки отключен; используем только текущие данные в БД"
+            "DRY-RUN: синк выписки и расходов в Sheets отключен; используем только текущие данные в БД"
         )
         matched_count, recalc_stats, newly_paid = _run_matching(
             unmatched_limit,
@@ -1372,7 +1416,11 @@ def main() -> None:
     }
     try:
         cashless_expense_stats.update(
-            _sync_cashless_expenses_to_sheets(limit=cashless_expense_sync_limit)
+            _sync_cashless_expenses_to_sheets(
+                limit=cashless_expense_sync_limit,
+                force=args.force_cashless_expenses,
+                from_date=args.cashless_expenses_from_date,
+            )
         )
     except Exception:
         cashless_expense_stats["failed"] = 1

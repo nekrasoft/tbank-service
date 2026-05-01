@@ -67,6 +67,8 @@ python3 -m src.cli.cron
 
 # Cron оплаты: синк выписки и матчинг оплат к invoices
 python3 -m src.cli.cron_payments
+# Повторно наполнить лист "Безнал-Расходы" из уже сохраненных операций, например после очистки вкладки
+python3 -m src.cli.cron_payments --force-cashless-expenses --cashless-expenses-from-date 2026-01-01
 
 # Cron напоминаний клиентам о просрочке оплаты (email)
 python3 -m src.cli.cron_invoice_reminders
@@ -88,6 +90,9 @@ python3 -m src.cli.import_counterparties_to_bitrix24
   перед добавлением cron сверяет уже существующие строки по банковским колонкам, чтобы не дублировать ручные строки.
   Если назначение платежа начинается с кода вида `1200-146-02`, cron заполняет `Структура` и `Операция`
   по справочникам `config/structure.json` и `config/operation.json`; `КСП` и `КСЗ` копируются формулами из предыдущей строки.
+- Для повторной выгрузки расходов используйте `--force-cashless-expenses`; флаг игнорирует отметку
+  `cashless_expense_sheet_synced_at`, но не отключает дедупликацию уже существующих строк в листе.
+  Нижнюю дату можно задать через `--cashless-expenses-from-date YYYY-MM-DD` или `--from-date DD.MM.YYYY`.
 - Для счетов в `invoices` добавлены агрегаты оплаты:
   - `paid_amount` — суммарно зачтенные входящие платежи;
   - `paid_at` — дата закрытия счета (когда сумма достигла total).
