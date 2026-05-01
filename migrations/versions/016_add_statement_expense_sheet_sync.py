@@ -1,7 +1,7 @@
 """Добавление отметки синка расходов выписки в Google Sheets
 
-Revision ID: 015
-Revises: 014
+Revision ID: 016
+Revises: 015
 Create Date: 2026-05-01
 
 """
@@ -11,8 +11,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "015"
-down_revision = "014"
+revision = "016"
+down_revision = "015"
 branch_labels = None
 depends_on = None
 
