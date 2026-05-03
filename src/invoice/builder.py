@@ -244,6 +244,7 @@ def build_invoice_comment(
     if contract_line:
         header_lines.append(contract_line)
     if service_addresses:
+        service_addresses = sorted(service_addresses)
         header_lines.append(f"Адреса оказания услуг: {'; '.join(service_addresses)};")
 
     if not grouped:
