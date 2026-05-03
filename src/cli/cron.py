@@ -99,6 +99,7 @@ def _get_uninvoiced_counterparties() -> list[str]:
 def _prepare_pending_invoices(counterparty_name: str, run_at: datetime) -> list[dict[str, Any]]:
     """Подготовка и фиксация одного или нескольких pending-счётов в БД."""
     from src.db.connection import get_session
+    from src.db.repos import bunkers as bunkers_repo
     from src.db.repos import counterparties as cp_repo
     from src.db.repos import invoices as inv_repo
     from src.db.repos import invoice_number as num_repo
@@ -108,6 +109,7 @@ def _prepare_pending_invoices(counterparty_name: str, run_at: datetime) -> list[
         build_custom_payment_purpose,
         build_invoice_items,
         build_invoice_period_text,
+        collect_bunker_numbers,
     )
     from src.invoice.splitter import split_works_for_counterparty
     from src.invoice.window import add_business_days, build_invoice_work_date_window, env_bool
@@ -189,12 +191,18 @@ def _prepare_pending_invoices(counterparty_name: str, run_at: datetime) -> list[
                 )
                 return []
             inv_num = num_repo.get_next_number(session)
+            bunker_addresses = bunkers_repo.get_addresses_by_counterparty_and_numbers(
+                session,
+                counterparty_id=cp.id,
+                numbers=collect_bunker_numbers(group_works),
+            )
             comment = build_invoice_comment(
                 group_works,
                 contract=cp.contract,
                 invoice_number=inv_num,
                 report_period_from=report_period_from,
                 report_period_to=report_period_to,
+                bunker_addresses_by_number=bunker_addresses,
             )
             custom_payment_purpose = build_custom_payment_purpose(
                 invoice_number=inv_num,

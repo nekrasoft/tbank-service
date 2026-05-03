@@ -190,6 +190,7 @@ def _prepare_pending_invoices(
 ) -> list[dict[str, Any]]:
     """Подготовка и фиксация одного или нескольких pending-счётов в БД."""
     from src.db.connection import get_session
+    from src.db.repos import bunkers as bunkers_repo
     from src.db.repos import counterparties as cp_repo
     from src.db.repos import invoices as inv_repo
     from src.db.repos import invoice_number as num_repo
@@ -199,6 +200,7 @@ def _prepare_pending_invoices(
         build_custom_payment_purpose,
         build_invoice_items,
         build_invoice_period_text,
+        collect_bunker_numbers,
     )
     from src.invoice.splitter import split_works_for_counterparty
     from src.invoice.window import add_business_days, build_invoice_work_date_window_manual, env_bool
@@ -320,6 +322,11 @@ def _prepare_pending_invoices(
                         group.label or group.key,
                     )
                     return []
+                bunker_addresses = bunkers_repo.get_addresses_by_counterparty_and_numbers(
+                    session,
+                    counterparty_id=cp.id,
+                    numbers=collect_bunker_numbers(group.works),
+                )
                 prepared_preview.append(
                     {
                         "counterparty_name": cp.name,
@@ -333,6 +340,7 @@ def _prepare_pending_invoices(
                             contract=cp.contract,
                             report_period_from=report_period_from,
                             report_period_to=report_period_to,
+                            bunker_addresses_by_number=bunker_addresses,
                         ),
                         "custom_payment_purpose": build_custom_payment_purpose(
                             invoice_number=None,
@@ -362,12 +370,18 @@ def _prepare_pending_invoices(
                 return []
 
             inv_num = num_repo.get_next_number(session)
+            bunker_addresses = bunkers_repo.get_addresses_by_counterparty_and_numbers(
+                session,
+                counterparty_id=cp.id,
+                numbers=collect_bunker_numbers(group.works),
+            )
             comment = build_invoice_comment(
                 group.works,
                 contract=cp.contract,
                 invoice_number=inv_num,
                 report_period_from=report_period_from,
                 report_period_to=report_period_to,
+                bunker_addresses_by_number=bunker_addresses,
             )
             custom_payment_purpose = build_custom_payment_purpose(
                 invoice_number=inv_num,

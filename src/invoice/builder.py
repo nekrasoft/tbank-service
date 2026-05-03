@@ -136,6 +136,27 @@ def _parse_note_and_bunker_numbers(note: str | None) -> tuple[str, list[str]]:
     return note_text, numbers
 
 
+def collect_bunker_numbers(works: list[Work]) -> list[str]:
+    """Возвращает уникальные номера бункеров из примечаний работ."""
+    numbers: list[str] = []
+    seen: set[str] = set()
+    for work in works:
+        _, bunker_numbers = _parse_note_and_bunker_numbers(work.note)
+        for number in bunker_numbers:
+            if number in seen:
+                continue
+            seen.add(number)
+            numbers.append(number)
+    return numbers
+
+
+def _bunker_address_key(number: str) -> str:
+    raw = str(number or "").strip()
+    if raw.isdigit():
+        return str(int(raw))
+    return raw
+
+
 def build_invoice_period_text(
     *,
     report_period_from: date_type | None = None,
@@ -174,16 +195,19 @@ def build_invoice_comment(
     invoice_number: str | None = None,
     report_period_from: date_type | None = None,
     report_period_to: date_type | None = None,
+    bunker_addresses_by_number: dict[str, str] | None = None,
 ) -> str:
     """
     Сборка комментария к счёту для T-Bank.
 
     Формат:
     Договор №111 от 12.03.2025
+    Адреса оказания услуг: адрес1; адрес2;
     Оказаны услуги за период 05.03.2026 - 10.03.2026:
     05.03.2026 Свободы 111А - 3 шт, 10.03.2026 Знак - 4 шт
     """
     contract_line = (contract or "").strip()
+    bunker_addresses = bunker_addresses_by_number or {}
 
     payment_purpose_hint = "ВНИМАНИЕ! При оплате счёта, пожалуйста, указывайте номер счёта в назначении платежа!"
 
@@ -195,6 +219,8 @@ def build_invoice_comment(
     grouped: dict[tuple[date_type, str, str, str | None], float] = defaultdict(float)
     grouped_bunker_numbers: dict[tuple[date_type, str, str, str | None], list[str]] = defaultdict(list)
     grouped_bunker_seen: dict[tuple[date_type, str, str, str | None], set[str]] = defaultdict(set)
+    service_addresses: list[str] = []
+    service_address_seen: set[str] = set()
     total_volume = 0.0
     for work in works:
         amount = _parse_amount(work.object_count)
@@ -208,14 +234,24 @@ def build_invoice_comment(
                 continue
             grouped_bunker_seen[key].add(number)
             grouped_bunker_numbers[key].append(number)
+            address = str(bunker_addresses.get(_bunker_address_key(number)) or "").strip()
+            if len(address) > 20 and address not in service_address_seen:
+                service_address_seen.add(address)
+                service_addresses.append(address)
         total_volume += amount * volume_m3
+
+    header_lines: list[str] = []
+    if contract_line:
+        header_lines.append(contract_line)
+    if service_addresses:
+        header_lines.append(f"Адреса оказания услуг: {'; '.join(service_addresses)};")
 
     if not grouped:
         body = (
             f"Оказаны услуги за период {period_text}."
             f"\n\n{payment_purpose_hint}"
         )
-        return f"{contract_line}\n{body}" if contract_line else body
+        return "\n".join([*header_lines, body]) if header_lines else body
 
     parts: list[str] = []
     for key, total in sorted(
@@ -243,7 +279,7 @@ def build_invoice_comment(
         + f"\nОбщий объем: {total_volume_str} м3"
         + f"\n\n{payment_purpose_hint}"
     )
-    return f"{contract_line}\n{body}" if contract_line else body
+    return "\n".join([*header_lines, body]) if header_lines else body
 
 
 def build_invoice_items(
