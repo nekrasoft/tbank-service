@@ -221,6 +221,7 @@ def get_statement(
     *,
     account_number: str,
     from_dt: datetime,
+    to_dt: datetime | None = None,
     cursor: str | None = None,
     limit: int = 200,
     operation_status: str | None = "Transaction",
@@ -232,6 +233,7 @@ def get_statement(
 
     :param account_number: Расчетный счет, по которому читаем выписку
     :param from_dt: Левая граница периода (UTC)
+    :param to_dt: Правая граница периода (UTC, не включительно)
     :param cursor: Курсор пагинации (nextCursor из предыдущего ответа)
     :param limit: Размер страницы (макс. 200)
     :param operation_status: Фильтр статуса операции (обычно Transaction)
@@ -250,6 +252,8 @@ def get_statement(
         "limit": max(1, min(int(limit), 200)),
         "withBalances": "true" if with_balances else "false",
     }
+    if to_dt is not None:
+        params["to"] = _format_utc_datetime(to_dt)
     if cursor:
         params["cursor"] = cursor
     if operation_status:

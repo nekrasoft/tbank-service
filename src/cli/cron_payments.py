@@ -118,12 +118,13 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--statement-date",
+        "--statement-from-date",
         "--statement-for-date",
         dest="statement_date",
         type=_parse_date_arg,
         metavar="DATE",
         help=(
-            "Запросить выписку T-Bank за конкретный бизнес-день "
+            "Запросить выписку T-Bank начиная с указанного бизнес-дня "
             "(YYYY-MM-DD или DD.MM.YYYY), игнорируя last_success_at. "
             "Состояние обычного инкрементального синка не обновляется."
         ),
@@ -676,16 +677,26 @@ _STATEMENT_WINDOW_DATE_FIELDS = (
 )
 
 
-def _operation_window_datetime_with_field(operation_data: dict[str, Any]) -> tuple[str | None, datetime | None]:
-    for field_name in _STATEMENT_WINDOW_DATE_FIELDS:
+_STATEMENT_QUERY_DATE_FIELDS = (
+    "operation_date",
+    "charge_date",
+    "draw_date",
+    "trxn_post_date",
+    "authorization_date",
+    "doc_date",
+)
+
+
+def _operation_query_datetime_with_field(operation_data: dict[str, Any]) -> tuple[str | None, datetime | None]:
+    for field_name in _STATEMENT_QUERY_DATE_FIELDS:
         value = operation_data.get(field_name)
         if value is not None:
             return field_name, value
     return None, None
 
 
-def _operation_window_datetime(operation_data: dict[str, Any]) -> datetime | None:
-    _, value = _operation_window_datetime_with_field(operation_data)
+def _operation_query_datetime(operation_data: dict[str, Any]) -> datetime | None:
+    _, value = _operation_query_datetime_with_field(operation_data)
     return value
 
 
@@ -707,7 +718,7 @@ def _is_operation_in_window(
     from_utc: datetime,
     to_utc: datetime,
 ) -> bool:
-    operation_dt = _to_utc_aware(_operation_window_datetime(operation_data))
+    operation_dt = _to_utc_aware(_operation_query_datetime(operation_data))
     if operation_dt is None:
         return True
     return from_utc <= operation_dt < to_utc
@@ -1217,7 +1228,7 @@ def _sync_statement_for_account(
     overlap_minutes: int,
     page_limit: int,
     statement_date: date | None = None,
-) -> tuple[int, int]:
+) -> dict[str, int]:
     from src.db.connection import get_session
     from src.db.repos import statement_operations as st_ops_repo
     from src.tbank.client import get_statement
@@ -1233,12 +1244,10 @@ def _sync_statement_for_account(
                     f"для бизнес-таймзоны {_get_business_timezone()}"
                 )
 
-            from_naive, to_naive = _utc_naive_bounds_for_business_date(statement_date)
+            from_naive, _ = _utc_naive_bounds_for_business_date(statement_date)
             from_utc = _to_utc_aware(from_naive)
-            to_utc = _to_utc_aware(to_naive)
-            if statement_date == business_today and to_utc and to_utc > now_utc:
-                to_utc = now_utc
-            sync_mode = f"manual-date:{statement_date.isoformat()}"
+            to_utc = now_utc
+            sync_mode = f"manual-from-date:{statement_date.isoformat()}"
         else:
             state = st_ops_repo.get_or_create_sync_state(session, account_number=account_number)
             session.flush()
@@ -1254,7 +1263,7 @@ def _sync_statement_for_account(
             from_utc = to_utc - timedelta(minutes=max(5, overlap_minutes))
 
         logger.info(
-            "Синк выписки account=%s mode=%s query_from=%s local_to=%s",
+            "Синк выписки account=%s mode=%s query_from=%s query_to=%s",
             account_number,
             sync_mode,
             from_utc.isoformat(),
@@ -1263,13 +1272,17 @@ def _sync_statement_for_account(
 
         cursor: str | None = None
         pages = 0
-        fetched = 0
-        created = 0
-        skipped_out_of_window = 0
+        stats = {
+            "fetched": 0,
+            "created": 0,
+            "existing": 0,
+            "skipped_out_of_window": 0,
+        }
         while True:
             data = get_statement(
                 account_number=account_number,
                 from_dt=from_utc,
+                to_dt=to_utc,
                 cursor=cursor,
                 limit=page_limit,
                 operation_status="Transaction",
@@ -1289,14 +1302,14 @@ def _sync_statement_for_account(
                 if not isinstance(raw, dict):
                     continue
                 op_data = _normalize_operation(raw, default_account_number=account_number)
-                fetched += 1
+                stats["fetched"] += 1
                 if not _is_operation_in_window(op_data, from_utc=from_utc, to_utc=to_utc):
-                    skipped_out_of_window += 1
-                    if statement_date is not None and skipped_out_of_window <= 20:
-                        date_field, date_value = _operation_window_datetime_with_field(op_data)
+                    stats["skipped_out_of_window"] += 1
+                    if statement_date is not None and stats["skipped_out_of_window"] <= 20:
+                        date_field, date_value = _operation_query_datetime_with_field(op_data)
                         logger.info(
                             (
-                                "Ручной синк: операция вне локального окна account=%s "
+                                "Ручной синк: операция вне запрошенного окна account=%s "
                                 "operation_id=%s date_field=%s date_value=%s "
                                 "operation_date=%s charge_date=%s draw_date=%s "
                                 "trxn_post_date=%s authorization_date=%s doc_date=%s "
@@ -1323,7 +1336,9 @@ def _sync_statement_for_account(
                     raw_payload=raw,
                 )
                 if is_created:
-                    created += 1
+                    stats["created"] += 1
+                else:
+                    stats["existing"] += 1
 
             session.commit()
 
@@ -1351,17 +1366,17 @@ def _sync_statement_for_account(
             session.commit()
         else:
             logger.info(
-                "Ручной синк выписки account=%s date=%s завершен без обновления last_success_at",
+                "Ручной синк выписки account=%s from_date=%s завершен без обновления last_success_at",
                 account_number,
                 statement_date.isoformat(),
             )
-        if skipped_out_of_window:
+        if stats["skipped_out_of_window"]:
             logger.info(
-                "Синк выписки account=%s: пропущено вне локального окна %s операций",
+                "Синк выписки account=%s: пропущено вне запрошенного окна %s операций",
                 account_number,
-                skipped_out_of_window,
+                stats["skipped_out_of_window"],
             )
-        return fetched, created
+        return stats
     except Exception:
         session.rollback()
         raise
@@ -1788,24 +1803,34 @@ def main() -> None:
 
     total_fetched = 0
     total_created = 0
+    total_existing = 0
+    total_skipped_out_of_window = 0
     sync_errors: list[str] = []
 
     for account_number in account_numbers:
         try:
-            fetched, created = _sync_statement_for_account(
+            sync_stats = _sync_statement_for_account(
                 account_number=account_number,
                 initial_lookback_days=initial_lookback_days,
                 overlap_minutes=overlap_minutes,
                 page_limit=page_limit,
                 statement_date=args.statement_date,
             )
+            fetched = sync_stats.get("fetched", 0)
+            created = sync_stats.get("created", 0)
+            existing = sync_stats.get("existing", 0)
+            skipped_out_of_window = sync_stats.get("skipped_out_of_window", 0)
             total_fetched += fetched
             total_created += created
+            total_existing += existing
+            total_skipped_out_of_window += skipped_out_of_window
             logger.info(
-                "Синк выписки account=%s завершен: fetched=%s created=%s",
+                "Синк выписки account=%s завершен: fetched=%s created=%s existing=%s skipped_out_of_window=%s",
                 account_number,
                 fetched,
                 created,
+                existing,
+                skipped_out_of_window,
             )
         except Exception as e:
             sync_errors.append(f"{account_number}: {e}")
@@ -1858,7 +1883,7 @@ def main() -> None:
 
     logger.info(
         (
-            "cron_payments завершен: fetched=%s created=%s matched=%s "
+            "cron_payments завершен: fetched=%s created=%s existing=%s skipped_out_of_window=%s matched=%s "
             "invoice_state_updates=%s (paid=%s partially_paid=%s issued=%s) "
             "cashless_expenses_candidates=%s appended=%s skipped_existing=%s marked=%s failed=%s "
             "cashless_incomes_candidates=%s appended=%s skipped_existing=%s marked=%s failed=%s "
@@ -1866,6 +1891,8 @@ def main() -> None:
         ),
         total_fetched,
         total_created,
+        total_existing,
+        total_skipped_out_of_window,
         matched_count,
         recalc_stats.get("updated", 0),
         recalc_stats.get("paid", 0),
