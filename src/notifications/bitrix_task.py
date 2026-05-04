@@ -149,6 +149,7 @@ def create_invoice_task_with_meta(
         return None
 
     invoice_amount = _calculate_invoice_amount(invoice_items)
+    operation_type_text = _build_task_operation_type_text(invoice_items)
     text = _build_task_description(
         counterparty_name=counterparty_name,
         counterparty_contract=counterparty_contract,
@@ -158,6 +159,7 @@ def create_invoice_task_with_meta(
         invoice_link=invoice_link,
         pdf_url=pdf_url,
         period_text=period_text,
+        operation_type_text=operation_type_text,
     )
     deadline = _build_task_deadline()
     task_title = _build_task_title(
@@ -329,6 +331,7 @@ def _build_task_description(
     invoice_link: str | None = None,
     pdf_url: str | None = None,
     period_text: str | None = None,
+    operation_type_text: str | None = None,
 ) -> str:
     """
     Описание задачи для Bitrix24 в BBCode.
@@ -342,6 +345,8 @@ def _build_task_description(
     ]
     if period_text:
         lines.append(f"[B]Период[/B]: {period_text}")
+    if operation_type_text:
+        lines.append(f"[B]Тип[/B]: {operation_type_text}")
     if invoice_amount is not None:
         lines.append(f"[B]Сумма[/B]: {_format_money(invoice_amount)}")
     if pdf_url:
@@ -355,6 +360,21 @@ def _build_task_description(
         ]
     )
     return "\n".join(lines)
+
+
+def _build_task_operation_type_text(invoice_items: list[dict[str, Any]] | None) -> str | None:
+    """Формирует строку operation_type для описания задачи."""
+    operation_types: list[str] = []
+    seen: set[str] = set()
+
+    for item in invoice_items or []:
+        operation_type = _normalize_operation_type(item.get("operation_type"))
+        if not operation_type or operation_type in seen:
+            continue
+        operation_types.append(operation_type)
+        seen.add(operation_type)
+
+    return ", ".join(operation_types) if operation_types else None
 
 
 def _calculate_invoice_amount(invoice_items: list[dict[str, Any]] | None) -> Decimal | None:
