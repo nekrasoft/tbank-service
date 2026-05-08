@@ -53,8 +53,14 @@ _DEFAULT_CASHLESS_ACCOUNT_LABEL = "Благосервис ТБанк"
 DEBUG_FORCE_EMAIL = (os.environ.get("DEBUG_FORCE_EMAIL") or "").strip() or None
 
 _INVOICE_HINT_RE = re.compile(
-    r"(?:сч[её]т(?:а|у|ом|ов)?|сч\.?|с/ф|сф|invoice|inv)"
+    r"(?:сч[её]т(?:а|у|ом|ов|ам|ами|ах)?|сч\.?|с/ф|сф|invoice|inv)"
     r"\s*(?:[:\-]\s*)?(?:(?:№|#|no|n[оo])\s*)?(\d{1,15})\b",
+    re.IGNORECASE,
+)
+_INVOICE_LIST_HINT_RE = re.compile(
+    r"(?:сч[её]т(?:а|у|ом|ов|ам|ами|ах)?|сч\.?|с/ф|сф|invoice|inv)"
+    r"\s*(?:[:\-]\s*)?(?:(?:№|#|no|n[оo])\s*)?"
+    r"(\d{1,15}(?:\s*(?:[,;/]|\bи\b|\band\b)\s*\d{1,15})*)\b",
     re.IGNORECASE,
 )
 _NON_ALNUM_RE = re.compile(r"[^0-9a-zа-яё]+", re.IGNORECASE)
@@ -567,7 +573,11 @@ def _extract_invoice_numbers(*texts: str | None) -> set[str]:
     joined = "\n".join(part for part in texts if part)
     if not joined:
         return set()
-    return {m.group(1).lstrip("0") or "0" for m in _INVOICE_HINT_RE.finditer(joined)}
+
+    numbers = {m.group(1).lstrip("0") or "0" for m in _INVOICE_HINT_RE.finditer(joined)}
+    for match in _INVOICE_LIST_HINT_RE.finditer(joined):
+        numbers.update(number.lstrip("0") or "0" for number in re.findall(r"\d{1,15}", match.group(1)))
+    return numbers
 
 
 
