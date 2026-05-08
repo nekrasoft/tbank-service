@@ -813,6 +813,29 @@ def _choose_unique_best(scored_candidates: list[tuple[Decimal, int, str]]) -> tu
     return best[1], best[0], best[2]
 
 
+def _choose_earliest_invoice_id(
+    candidate_ids: list[int],
+    invoice_state: dict[int, dict[str, Any]],
+) -> int | None:
+    candidates: list[tuple[datetime, int]] = []
+    for invoice_id in candidate_ids:
+        entry = invoice_state.get(invoice_id)
+        if not entry:
+            continue
+        invoice = entry["invoice"]
+        issued_at = getattr(invoice, "issued_at", None)
+        issued_utc = _to_utc_aware(issued_at)
+        if issued_utc is None:
+            continue
+        candidates.append((issued_utc, invoice_id))
+
+    if not candidates:
+        return min(candidate_ids) if candidate_ids else None
+
+    candidates.sort(key=lambda item: (item[0], item[1]))
+    return candidates[0][1]
+
+
 
 def _match_operation_to_invoice(
     operation: Any,
@@ -908,6 +931,15 @@ def _match_operation_to_invoice(
             "method": "payer_inn_amount",
             "amount": amount,
         }
+    if len(candidates) > 1:
+        invoice_id = _choose_earliest_invoice_id(candidates, invoice_state)
+        if invoice_id is not None:
+            return {
+                "invoice_id": invoice_id,
+                "confidence": Decimal("0.86"),
+                "method": "payer_inn_amount_earliest",
+                "amount": amount,
+            }
 
     # 3) Осторожный fallback: уникальное совпадение по имени + сумме.
     scored_name: list[tuple[Decimal, int, str]] = []
