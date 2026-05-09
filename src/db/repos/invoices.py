@@ -160,6 +160,23 @@ def get_open_for_payment_matching(session: Session) -> list[Invoice]:
     return list(result.scalars().all())
 
 
+def get_paid_for_payment_backfill(session: Session) -> list[Invoice]:
+    """
+    Оплаченные счета-кандидаты для дозаполнения агрегатов оплаты.
+
+    Используется ручным прогоном выписки: часть исторических счетов уже могла
+    получить status=paid до появления paid_at/paid_amount или до привязки
+    операций выписки.
+    """
+    result = session.execute(
+        select(Invoice)
+        .where(Invoice.status == "paid")
+        .options(joinedload(Invoice.counterparty), selectinload(Invoice.items))
+        .order_by(Invoice.issued_at.asc(), Invoice.id.asc())
+    )
+    return list(result.scalars().all())
+
+
 def get_for_payment_recalc(session: Session, invoice_ids: list[int]) -> list[Invoice]:
     """Получение счетов для пересчета статуса оплаты."""
     if not invoice_ids:

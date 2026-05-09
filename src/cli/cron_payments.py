@@ -744,6 +744,34 @@ def _invoice_total(invoice: Any) -> Decimal:
     return total.quantize(_MONEY_Q, rounding=ROUND_HALF_UP)
 
 
+def _invoice_paid_amount(invoice: Any) -> Decimal:
+    return Decimal(str(invoice.paid_amount or 0)).quantize(_MONEY_Q, rounding=ROUND_HALF_UP)
+
+
+def _invoice_needs_payment_backfill(invoice: Any) -> bool:
+    if str(invoice.status or "").strip() != "paid":
+        return False
+    if invoice.paid_at is None:
+        return True
+    return abs(_invoice_paid_amount(invoice) - _invoice_total(invoice)) > _AMOUNT_TOLERANCE
+
+
+def _merge_invoices_by_id(*invoice_lists: list[Any]) -> list[Any]:
+    by_id: dict[int, Any] = {}
+    for invoice_list in invoice_lists:
+        for invoice in invoice_list:
+            by_id.setdefault(int(invoice.id), invoice)
+    return list(by_id.values())
+
+
+def _invoice_state_is_fully_paid(entry: dict[str, Any] | None) -> bool:
+    if not entry:
+        return False
+    paid = Decimal(str(entry["paid"])).quantize(_MONEY_Q, rounding=ROUND_HALF_UP)
+    total = Decimal(str(entry["total"])).quantize(_MONEY_Q, rounding=ROUND_HALF_UP)
+    return paid > _AMOUNT_TOLERANCE and paid + _AMOUNT_TOLERANCE >= total
+
+
 
 def _build_invoice_state(open_invoices: list[Any], matched_incoming: list[Any]) -> dict[int, dict[str, Any]]:
     invoice_by_id: dict[int, Any] = {int(invoice.id): invoice for invoice in open_invoices}
@@ -844,6 +872,7 @@ def _match_operation_to_invoice(
     invoices_by_number: dict[str, list[int]],
     invoices_by_inn: dict[str, list[int]],
     open_invoice_ids: list[int],
+    invoice_number_only_invoice_ids: set[int] | None = None,
 ) -> dict[str, Any] | None:
     amount = _operation_amount_from_row(operation)
     if amount <= 0:
@@ -854,6 +883,10 @@ def _match_operation_to_invoice(
     if not payer_inn:
         return None
     payer_name = operation.payer_name or operation.counterparty_name
+    invoice_number_only_invoice_ids = invoice_number_only_invoice_ids or set()
+
+    def _can_use_fallback(invoice_id: int) -> bool:
+        return invoice_id not in invoice_number_only_invoice_ids
 
     def _has_required_inn(invoice: Any) -> bool:
         if not invoice or not invoice.counterparty:
@@ -906,6 +939,8 @@ def _match_operation_to_invoice(
     # 2) Надежный fallback: уникальный ИНН + сумма в пределах остатка.
     candidates = []
     for invoice_id in invoices_by_inn.get(payer_inn, []):
+        if not _can_use_fallback(invoice_id):
+            continue
         entry = invoice_state.get(invoice_id)
         if not entry:
             continue
@@ -944,6 +979,8 @@ def _match_operation_to_invoice(
     # 3) Осторожный fallback: уникальное совпадение по имени + сумме.
     scored_name: list[tuple[Decimal, int, str]] = []
     for invoice_id in open_invoice_ids:
+        if not _can_use_fallback(invoice_id):
+            continue
         entry = invoice_state.get(invoice_id)
         if not entry:
             continue
@@ -1637,6 +1674,7 @@ def _run_matching(
     unmatched_limit: int,
     *,
     dry_run: bool = False,
+    include_paid_backfill: bool = False,
 ) -> tuple[int, dict[str, int], list[dict[str, Any]]]:
     from src.db.connection import get_session
     from src.db.repos import invoices as inv_repo
@@ -1645,26 +1683,52 @@ def _run_matching(
     session = get_session()
     try:
         unmatched = st_ops_repo.get_unmatched_incoming(session, limit=unmatched_limit)
-        if not unmatched:
+        if not unmatched and not include_paid_backfill:
             logger.info("Нет новых неприлинкованных входящих операций")
             return 0, {"paid": 0, "partially_paid": 0, "issued": 0, "updated": 0}, []
 
         open_invoices = inv_repo.get_open_for_payment_matching(session)
-        if not open_invoices:
-            logger.info("Нет открытых счетов для автозачета оплат")
+        paid_backfill_invoices: list[Any] = []
+        if include_paid_backfill:
+            paid_backfill_invoices = [
+                invoice
+                for invoice in inv_repo.get_paid_for_payment_backfill(session)
+                if _invoice_needs_payment_backfill(invoice)
+            ]
+            if paid_backfill_invoices:
+                logger.info(
+                    "Ручной backfill оплат: найдено paid-счетов с неполными paid_at/paid_amount: %s",
+                    len(paid_backfill_invoices),
+                )
+
+        candidate_invoices = _merge_invoices_by_id(open_invoices, paid_backfill_invoices)
+        if not candidate_invoices:
+            logger.info("Нет счетов для автозачета оплат")
             return 0, {"paid": 0, "partially_paid": 0, "issued": 0, "updated": 0}, []
 
         matched_incoming = st_ops_repo.get_matched_incoming_for_invoices(
             session,
-            invoice_ids=[invoice.id for invoice in open_invoices],
+            invoice_ids=[invoice.id for invoice in candidate_invoices],
         )
-        invoice_state = _build_invoice_state(open_invoices, matched_incoming)
+        invoice_state = _build_invoice_state(candidate_invoices, matched_incoming)
+
+        paid_backfill_invoice_ids = {int(invoice.id) for invoice in paid_backfill_invoices}
+        matched_invoice_ids = {
+            int(operation.matched_invoice_id)
+            for operation in matched_incoming
+            if operation.matched_invoice_id
+        }
+        backfill_recalc_ids = {
+            invoice_id
+            for invoice_id in paid_backfill_invoice_ids & matched_invoice_ids
+            if _invoice_state_is_fully_paid(invoice_state.get(invoice_id))
+        }
 
         invoices_by_number: dict[str, list[int]] = defaultdict(list)
         invoices_by_inn: dict[str, list[int]] = defaultdict(list)
         open_invoice_ids: list[int] = []
 
-        for invoice in open_invoices:
+        for invoice in candidate_invoices:
             entry = invoice_state.get(invoice.id)
             if not entry or _remaining_amount(entry) <= 0:
                 continue
@@ -1677,20 +1741,21 @@ def _run_matching(
                 invoices_by_inn[invoice.counterparty.inn.strip()].append(invoice.id)
 
         if not open_invoice_ids:
-            logger.info("Все открытые счета уже полностью оплачены, матчить нечего")
-            return 0, {"paid": 0, "partially_paid": 0, "issued": 0, "updated": 0}, []
+            logger.info("Все счета-кандидаты уже полностью оплачены, новых операций матчить некуда")
 
         matched_count = 0
         touched_invoice_ids: set[int] = set()
         now_utc_naive = datetime.utcnow().replace(microsecond=0)
 
-        for operation in unmatched:
+        operations_to_match = unmatched if open_invoice_ids else []
+        for operation in operations_to_match:
             decision = _match_operation_to_invoice(
                 operation,
                 invoice_state=invoice_state,
                 invoices_by_number=invoices_by_number,
                 invoices_by_inn=invoices_by_inn,
                 open_invoice_ids=open_invoice_ids,
+                invoice_number_only_invoice_ids=paid_backfill_invoice_ids,
             )
             if not decision:
                 continue
@@ -1716,8 +1781,30 @@ def _run_matching(
             touched_invoice_ids.add(invoice_id)
             matched_count += 1
 
-        if matched_count:
-            recalc_stats, newly_paid = _recalculate_payment_state(session, invoice_ids=touched_invoice_ids)
+        normal_touched_ids = touched_invoice_ids - paid_backfill_invoice_ids
+        touched_paid_backfill_ready_ids = {
+            invoice_id
+            for invoice_id in touched_invoice_ids & paid_backfill_invoice_ids
+            if _invoice_state_is_fully_paid(invoice_state.get(invoice_id))
+        }
+        paid_backfill_ids_with_operations = (
+            touched_invoice_ids | (paid_backfill_invoice_ids & matched_invoice_ids)
+        ) & paid_backfill_invoice_ids
+        skipped_paid_backfill_ids = paid_backfill_ids_with_operations - (
+            touched_paid_backfill_ready_ids | backfill_recalc_ids
+        )
+        if skipped_paid_backfill_ids:
+            logger.info(
+                (
+                    "Ручной backfill оплат: %s paid-счетов имеют привязанные операции, "
+                    "но сумма пока меньше итога счета; статус paid не пересчитываем"
+                ),
+                len(skipped_paid_backfill_ids),
+            )
+
+        recalc_invoice_ids = normal_touched_ids | touched_paid_backfill_ready_ids | backfill_recalc_ids
+        if recalc_invoice_ids:
+            recalc_stats, newly_paid = _recalculate_payment_state(session, invoice_ids=recalc_invoice_ids)
             if dry_run:
                 session.rollback()
                 return matched_count, recalc_stats, newly_paid
@@ -1725,6 +1812,13 @@ def _run_matching(
             session.commit()
             _sync_paid_invoices_to_bitrix(newly_paid)
             return matched_count, recalc_stats, newly_paid
+
+        if matched_count:
+            if dry_run:
+                session.rollback()
+            else:
+                session.commit()
+            return matched_count, {"paid": 0, "partially_paid": 0, "issued": 0, "updated": 0}, []
 
         session.rollback()
         return 0, {"paid": 0, "partially_paid": 0, "issued": 0, "updated": 0}, []
@@ -1920,7 +2014,10 @@ def main() -> None:
         cashless_income_stats["failed"] = 1
         logger.exception("Ошибка синхронизации доходов в Sheets")
 
-    matched_count, recalc_stats, _ = _run_matching(unmatched_limit)
+    matched_count, recalc_stats, _ = _run_matching(
+        unmatched_limit,
+        include_paid_backfill=args.statement_date is not None,
+    )
     payment_thank_stats = _send_due_payment_thank_you_emails(limit=payment_thank_email_limit)
 
     logger.info(
