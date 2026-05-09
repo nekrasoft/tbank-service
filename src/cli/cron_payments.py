@@ -169,8 +169,6 @@ def _parse_args() -> argparse.Namespace:
     args = parser.parse_args()
     if args.dry_run_bitrix and not args.dry_run:
         parser.error("--dry-run-bitrix можно использовать только вместе с --dry-run")
-    if args.dry_run and args.statement_date:
-        parser.error("--statement-date нельзя использовать вместе с --dry-run: dry-run не запрашивает T-Bank")
     return args
 
 
@@ -1039,6 +1037,10 @@ def _payment_datetime(op_row: Any) -> datetime | None:
     return _operation_effective_datetime(op_row)
 
 
+def _format_dt_log(value: datetime | None) -> str | None:
+    return value.isoformat(sep=" ") if value else None
+
+
 def _is_payment_after_invoice_issue(
     *,
     payment_dt: datetime | None,
@@ -1064,12 +1066,14 @@ def _recalculate_payment_state(
     session: Any,
     *,
     invoice_ids: set[int],
+    preserve_paid_status_ids: set[int] | None = None,
 ) -> tuple[dict[str, int], list[dict[str, Any]]]:
     from src.db.repos import invoices as inv_repo
     from src.db.repos import statement_operations as st_ops_repo
 
     if not invoice_ids:
         return {"paid": 0, "partially_paid": 0, "issued": 0, "updated": 0}, []
+    preserve_paid_status_ids = preserve_paid_status_ids or set()
 
     invoice_list = inv_repo.get_for_payment_recalc(session, sorted(invoice_ids))
     matched = st_ops_repo.get_matched_incoming_for_invoices(session, invoice_ids=sorted(invoice_ids))
@@ -1102,7 +1106,12 @@ def _recalculate_payment_state(
         paid = paid_sum.get(invoice.id, Decimal("0.00")).quantize(_MONEY_Q, rounding=ROUND_HALF_UP)
         prev_status = str(invoice.status or "").strip()
 
-        if paid <= _AMOUNT_TOLERANCE:
+        preserve_existing_paid = invoice.id in preserve_paid_status_ids and prev_status == "paid"
+        if preserve_existing_paid and paid > _AMOUNT_TOLERANCE:
+            new_status = "paid"
+            new_paid_at = paid_at.get(invoice.id) or invoice.paid_at or datetime.utcnow()
+            stats["paid"] += 1
+        elif paid <= _AMOUNT_TOLERANCE:
             new_status = "issued"
             new_paid_at = None
             stats["issued"] += 1
@@ -1123,6 +1132,22 @@ def _recalculate_payment_state(
         if not needs_update:
             continue
 
+        logger.info(
+            (
+                "Обновляем оплату счета id=%s number=%s total=%s "
+                "status=%s->%s paid_amount=%s->%s paid_at=%s->%s preserve_paid=%s"
+            ),
+            invoice.id,
+            invoice.invoice_number,
+            _format_money_ru(total),
+            invoice.status,
+            new_status,
+            _format_money_ru(_invoice_paid_amount(invoice)),
+            _format_money_ru(paid),
+            _format_dt_log(invoice.paid_at),
+            _format_dt_log(new_paid_at),
+            preserve_existing_paid,
+        )
         updated = inv_repo.update_payment_state(
             session,
             invoice_id=invoice.id,
@@ -1319,13 +1344,18 @@ def _sync_statement_for_account(
     overlap_minutes: int,
     page_limit: int,
     statement_date: date | None = None,
+    dry_run: bool = False,
+    session: Any | None = None,
 ) -> dict[str, int]:
-    from src.db.connection import get_session
     from src.db.repos import statement_operations as st_ops_repo
     from src.tbank.client import get_statement
 
     now_utc = datetime.now(timezone.utc).replace(microsecond=0)
-    session = get_session()
+    own_session = session is None
+    if session is None:
+        from src.db.connection import get_session
+
+        session = get_session()
     try:
         if statement_date is not None:
             business_today = _business_today()
@@ -1431,7 +1461,10 @@ def _sync_statement_for_account(
                 else:
                     stats["existing"] += 1
 
-            session.commit()
+            if dry_run:
+                session.flush()
+            else:
+                session.commit()
 
             next_cursor = str(data.get("nextCursor") or "").strip() or None
             if not next_cursor:
@@ -1446,7 +1479,7 @@ def _sync_statement_for_account(
             cursor = next_cursor
             time.sleep(TBANK_DELAY_SEC)
 
-        if statement_date is None:
+        if statement_date is None and not dry_run:
             st_ops_repo.update_sync_state(
                 session,
                 account_number=account_number,
@@ -1455,6 +1488,11 @@ def _sync_statement_for_account(
                 last_success_at=_to_utc_naive(to_utc),
             )
             session.commit()
+        elif statement_date is None:
+            logger.info(
+                "DRY-RUN: синк выписки account=%s завершен без обновления last_success_at",
+                account_number,
+            )
         else:
             logger.info(
                 "Ручной синк выписки account=%s from_date=%s завершен без обновления last_success_at",
@@ -1472,7 +1510,8 @@ def _sync_statement_for_account(
         session.rollback()
         raise
     finally:
-        session.close()
+        if own_session:
+            session.close()
 
 
 def _build_cashless_expense_sheet_rows(
@@ -1687,12 +1726,16 @@ def _run_matching(
     *,
     dry_run: bool = False,
     include_paid_backfill: bool = False,
+    session: Any | None = None,
 ) -> tuple[int, dict[str, int], list[dict[str, Any]]]:
-    from src.db.connection import get_session
     from src.db.repos import invoices as inv_repo
     from src.db.repos import statement_operations as st_ops_repo
 
-    session = get_session()
+    own_session = session is None
+    if session is None:
+        from src.db.connection import get_session
+
+        session = get_session()
     try:
         unmatched = st_ops_repo.get_unmatched_incoming(session, limit=unmatched_limit)
         if not unmatched and not include_paid_backfill:
@@ -1812,21 +1855,35 @@ def _run_matching(
         paid_backfill_ids_with_operations = (
             touched_invoice_ids | (paid_backfill_invoice_ids & matched_invoice_ids)
         ) & paid_backfill_invoice_ids
-        skipped_paid_backfill_ids = paid_backfill_ids_with_operations - (
+        partial_paid_backfill_ids = paid_backfill_ids_with_operations - (
             touched_paid_backfill_ready_ids | backfill_recalc_ids
         )
-        if skipped_paid_backfill_ids:
+        if partial_paid_backfill_ids:
             logger.info(
                 (
                     "Ручной backfill оплат: %s paid-счетов имеют привязанные операции, "
-                    "но сумма пока меньше итога счета; статус paid не пересчитываем"
+                    "но сумма пока меньше итога счета; обновляем paid_amount/paid_at, статус paid сохраняем"
                 ),
-                len(skipped_paid_backfill_ids),
+                len(partial_paid_backfill_ids),
             )
 
-        recalc_invoice_ids = normal_touched_ids | touched_paid_backfill_ready_ids | backfill_recalc_ids
+        paid_backfill_recalc_ids = (
+            touched_paid_backfill_ready_ids | backfill_recalc_ids | partial_paid_backfill_ids
+        )
+        paid_backfill_without_operations = paid_backfill_invoice_ids - paid_backfill_ids_with_operations
+        if paid_backfill_without_operations:
+            logger.info(
+                "Ручной backfill оплат: %s paid-счетов пока без привязанных операций; paid_at/paid_amount не обновлены",
+                len(paid_backfill_without_operations),
+            )
+
+        recalc_invoice_ids = normal_touched_ids | paid_backfill_recalc_ids
         if recalc_invoice_ids:
-            recalc_stats, newly_paid = _recalculate_payment_state(session, invoice_ids=recalc_invoice_ids)
+            recalc_stats, newly_paid = _recalculate_payment_state(
+                session,
+                invoice_ids=recalc_invoice_ids,
+                preserve_paid_status_ids=paid_backfill_recalc_ids,
+            )
             if dry_run:
                 session.rollback()
                 return matched_count, recalc_stats, newly_paid
@@ -1848,7 +1905,8 @@ def _run_matching(
         session.rollback()
         raise
     finally:
-        session.close()
+        if own_session:
+            session.close()
 
 
 
@@ -1924,13 +1982,78 @@ def main() -> None:
     )
 
     if args.dry_run:
-        logger.warning(
-            "DRY-RUN: синк выписки, расходов и доходов в Sheets отключен; используем только текущие данные в БД"
-        )
-        matched_count, recalc_stats, newly_paid = _run_matching(
-            unmatched_limit,
-            dry_run=True,
-        )
+        total_fetched = 0
+        total_created = 0
+        total_existing = 0
+        total_skipped_out_of_window = 0
+
+        if args.statement_date:
+            from src.db.connection import get_session
+
+            logger.warning(
+                (
+                    "DRY-RUN: запрашиваем выписку T-Bank и выполняем предпросмотр матчинга "
+                    "в одной транзакции; изменения в БД будут отменены"
+                )
+            )
+            preview_session = get_session()
+            sync_errors: list[str] = []
+            try:
+                for account_number in account_numbers:
+                    try:
+                        sync_stats = _sync_statement_for_account(
+                            account_number=account_number,
+                            initial_lookback_days=initial_lookback_days,
+                            overlap_minutes=overlap_minutes,
+                            page_limit=page_limit,
+                            statement_date=args.statement_date,
+                            dry_run=True,
+                            session=preview_session,
+                        )
+                        fetched = sync_stats.get("fetched", 0)
+                        created = sync_stats.get("created", 0)
+                        existing = sync_stats.get("existing", 0)
+                        skipped_out_of_window = sync_stats.get("skipped_out_of_window", 0)
+                        total_fetched += fetched
+                        total_created += created
+                        total_existing += existing
+                        total_skipped_out_of_window += skipped_out_of_window
+                        logger.info(
+                            (
+                                "DRY-RUN: синк выписки account=%s завершен: "
+                                "fetched=%s created=%s existing=%s skipped_out_of_window=%s"
+                            ),
+                            account_number,
+                            fetched,
+                            created,
+                            existing,
+                            skipped_out_of_window,
+                        )
+                    except Exception as e:
+                        sync_errors.append(f"{account_number}: {e}")
+                        logger.exception("DRY-RUN: ошибка синка выписки account=%s", account_number)
+
+                if sync_errors:
+                    logger.error("DRY-RUN: синк выписки завершился с ошибками: %s", sync_errors)
+                    preview_session.rollback()
+                    sys.exit(1)
+
+                matched_count, recalc_stats, newly_paid = _run_matching(
+                    unmatched_limit,
+                    dry_run=True,
+                    include_paid_backfill=True,
+                    session=preview_session,
+                )
+            finally:
+                preview_session.close()
+        else:
+            logger.warning(
+                "DRY-RUN: синк выписки, расходов и доходов в Sheets отключен; используем только текущие данные в БД"
+            )
+            matched_count, recalc_stats, newly_paid = _run_matching(
+                unmatched_limit,
+                dry_run=True,
+            )
         _log_dry_run_paid_preview(newly_paid)
 
         if args.dry_run_bitrix:
@@ -1946,11 +2069,14 @@ def main() -> None:
 
         logger.info(
             (
-                "cron_payments DRY-RUN завершен: fetched=%s created=%s matched=%s "
+                "cron_payments DRY-RUN завершен: fetched=%s created=%s existing=%s "
+                "skipped_out_of_window=%s matched=%s "
                 "invoice_state_updates=%s (paid=%s partially_paid=%s issued=%s)"
             ),
-            0,
-            0,
+            total_fetched,
+            total_created,
+            total_existing,
+            total_skipped_out_of_window,
             matched_count,
             recalc_stats.get("updated", 0),
             recalc_stats.get("paid", 0),
