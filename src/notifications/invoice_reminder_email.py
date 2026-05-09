@@ -7,9 +7,11 @@ from email.header import Header
 from email.message import EmailMessage
 from email.utils import formataddr
 import logging
+import mimetypes
 import os
 import re
 import smtplib
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -166,19 +168,114 @@ def build_invoice_payment_thank_you_text(
     return "\n".join(lines)
 
 
+def build_invoice_work_files_subject(*, invoice_number: str) -> str:
+    """Тема письма с файлами выполненных работ."""
+    return f"Документы по счету №{invoice_number}"
+
+
+def build_invoice_work_files_text(
+    *,
+    counterparty_name: str,
+    invoice_number: str,
+    invoice_date: date,
+    payment_link: str | None,
+    pdf_url: str | None,
+) -> str:
+    """Текст письма с файлами выполненных работ."""
+    lines = [
+        f"Здравствуйте, {counterparty_name}.",
+        "",
+        f"Во вложении файлы подтверждения выполненных работ по счету №{invoice_number} "
+        f"от {invoice_date.strftime('%d.%m.%Y')}.",
+    ]
+    if payment_link:
+        lines.extend([
+            "",
+            f"Ссылка для оплаты: {payment_link}",
+        ])
+    if pdf_url:
+        if not payment_link:
+            lines.append("")
+        lines.append(f"Счет (PDF): {pdf_url}")
+    return "\n".join(lines)
+
+
+def _normalize_file_content(value: Any) -> bytes:
+    """Приводит сохранённые bytes/blob к bytes."""
+    if value is None:
+        return b""
+    if isinstance(value, bytes):
+        return value
+    if isinstance(value, bytearray):
+        return bytes(value)
+    if isinstance(value, memoryview):
+        return value.tobytes()
+    return b""
+
+
+def _build_attachment_file_name(attachment: dict[str, Any], *, index: int) -> str:
+    """Готовит безопасное имя файла для email-вложения."""
+    raw_name = str(attachment.get("file_name") or "").strip()
+    if not raw_name:
+        token = str(attachment.get("file_token") or "").strip()
+        content_type = str(attachment.get("content_type") or "").split(";", 1)[0].strip()
+        extension = mimetypes.guess_extension(content_type) or ".bin"
+        raw_name = f"work-file-{token or index}{extension}"
+
+    name = raw_name.replace("\x00", "").replace("/", "_").replace("\\", "_").strip()
+    return name or f"work-file-{index}.bin"
+
+
+def _normalize_email_attachments(
+    attachments: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """Нормализует вложения для EmailMessage.add_attachment."""
+    normalized: list[dict[str, Any]] = []
+    for idx, attachment in enumerate(attachments or [], start=1):
+        file_content = _normalize_file_content(attachment.get("file_data"))
+        if not file_content:
+            continue
+
+        file_name = _build_attachment_file_name(attachment, index=idx)
+        maintype = str(attachment.get("maintype") or "").strip()
+        subtype = str(attachment.get("subtype") or "").strip()
+        content_type = str(attachment.get("content_type") or "").split(";", 1)[0].strip()
+        if not (maintype and subtype):
+            if not content_type:
+                guessed_type, _encoding = mimetypes.guess_type(file_name)
+                content_type = guessed_type or "application/octet-stream"
+            if "/" not in content_type:
+                content_type = "application/octet-stream"
+            maintype, subtype = content_type.split("/", 1)
+        if not maintype or not subtype:
+            maintype, subtype = "application", "octet-stream"
+
+        normalized.append(
+            {
+                "file_name": file_name,
+                "file_data": file_content,
+                "maintype": maintype,
+                "subtype": subtype,
+            }
+        )
+    return normalized
+
+
 def _send_invoice_email(
     *,
-    recipients: list[str],
+    recipients: str | list[str],
     subject: str,
     text: str,
     invoice_number: str,
     kind: str,
     empty_recipients_error: str,
+    attachments: list[dict[str, Any]] | None = None,
 ) -> None:
     """Отправляет текстовое письмо по общим SMTP-настройкам invoice email."""
     normalized_recipients = normalize_emails(recipients)
     if not normalized_recipients:
         raise ValueError(empty_recipients_error)
+    normalized_attachments = _normalize_email_attachments(attachments)
 
     host = (os.environ.get("INVOICE_REMINDER_EMAIL_SMTP_HOST") or "").strip()
     if not host:
@@ -223,6 +320,13 @@ def _send_invoice_email(
     if reply_to:
         msg["Reply-To"] = reply_to
     msg.set_content(text)
+    for attachment in normalized_attachments:
+        msg.add_attachment(
+            attachment["file_data"],
+            maintype=attachment["maintype"],
+            subtype=attachment["subtype"],
+            filename=attachment["file_name"],
+        )
 
     logger.info(
         "Email %s SMTP config: host=%s port=%s tls=%s ssl=%s user=%s timeout=%ss debug=%s",
@@ -271,10 +375,11 @@ def _send_invoice_email(
         ) from e
 
     logger.info(
-        "Email %s: отправлено письмо по счету %s на %s",
+        "Email %s: отправлено письмо по счету %s на %s%s",
         kind,
         invoice_number,
         ", ".join(normalized_recipients),
+        f", вложений={len(normalized_attachments)}" if normalized_attachments else "",
     )
 
 
@@ -341,4 +446,42 @@ def send_invoice_payment_thank_you(
         invoice_number=invoice_number,
         kind="payment_thanks",
         empty_recipients_error="Нет валидных email получателей для отправки благодарности за оплату",
+    )
+
+
+def send_invoice_work_files(
+    *,
+    recipients: str | list[str],
+    invoice_number: str,
+    counterparty_name: str,
+    invoice_date: date,
+    payment_link: str | None,
+    pdf_url: str | None,
+    attachments: list[dict[str, Any]],
+) -> None:
+    """Отправка клиенту файлов выполненных работ по выставленному счёту."""
+    normalized_attachments = _normalize_email_attachments(attachments)
+    if not normalized_attachments:
+        logger.warning(
+            "Email work_files: нет валидных вложений для отправки по счету %s",
+            invoice_number,
+        )
+        return
+
+    subject = build_invoice_work_files_subject(invoice_number=invoice_number)
+    text = build_invoice_work_files_text(
+        counterparty_name=counterparty_name,
+        invoice_number=invoice_number,
+        invoice_date=invoice_date,
+        payment_link=payment_link,
+        pdf_url=pdf_url,
+    )
+    _send_invoice_email(
+        recipients=recipients,
+        subject=subject,
+        text=text,
+        invoice_number=invoice_number,
+        kind="work_files",
+        empty_recipients_error="Нет валидных email получателей для отправки файлов работ",
+        attachments=normalized_attachments,
     )

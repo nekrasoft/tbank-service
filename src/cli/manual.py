@@ -679,7 +679,7 @@ def main() -> None:
         return
 
     from src.notifications.bitrix_task import create_invoice_task_with_meta
-    from src.notifications.invoice_reminder_email import normalize_emails
+    from src.notifications.invoice_reminder_email import normalize_emails, send_invoice_work_files
     from src.notifications.max import send_invoice_notification as send_max_notification
     from src.notifications.telegram import send_invoice_notification_bytes
     from src.sheets.writer import mark_document_in_sheet
@@ -779,6 +779,20 @@ def main() -> None:
                         )
             except Exception:
                 logger.exception("Ошибка создания задачи Bitrix24 по счёту %s", invoice_number)
+            task_files = prepared.get("bitrix_task_files") or []
+            if task_files:
+                try:
+                    send_invoice_work_files(
+                        recipients=target_email,
+                        invoice_number=invoice_number,
+                        counterparty_name=counterparty_name,
+                        invoice_date=prepared["invoice_date"],
+                        payment_link=str(invoice_link) if invoice_link else None,
+                        pdf_url=str(pdf_url) if pdf_url else None,
+                        attachments=task_files,
+                    )
+                except Exception:
+                    logger.exception("Ошибка email-отправки файлов работ по счёту %s", invoice_number)
             try:
                 send_max_notification(
                     counterparty_name=counterparty_name,
