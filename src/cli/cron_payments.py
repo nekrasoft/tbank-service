@@ -1051,6 +1051,103 @@ def _match_operation_to_invoice(
     return None
 
 
+def _build_multi_invoice_payment_allocations(
+    operations: list[Any],
+    *,
+    invoice_state: dict[int, dict[str, Any]],
+    invoices_by_number: dict[str, list[int]],
+    target_invoice_ids: set[int],
+    preserve_paid_status_ids: set[int] | None = None,
+) -> dict[int, list[dict[str, Any]]]:
+    allocations: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    if not operations or not target_invoice_ids:
+        return allocations
+    preserve_paid_status_ids = preserve_paid_status_ids or set()
+
+    def _allocation_amount(invoice_id: int, entry: dict[str, Any]) -> Decimal:
+        if invoice_id in preserve_paid_status_ids:
+            return Decimal(str(entry["total"])).quantize(_MONEY_Q, rounding=ROUND_HALF_UP)
+        return _remaining_amount(entry)
+
+    for operation in operations:
+        mentioned_numbers = _operation_invoice_numbers(operation)
+        if len(mentioned_numbers) < 2:
+            continue
+
+        operation_amount = _operation_amount_from_row(operation)
+        if operation_amount <= 0:
+            continue
+
+        payer_inn = str(operation.payer_inn or operation.counterparty_inn or "").strip()
+        if not payer_inn:
+            continue
+
+        payment_dt = _payment_datetime(operation)
+        candidate_entries: dict[int, dict[str, Any]] = {}
+        for number in mentioned_numbers:
+            for invoice_id in invoices_by_number.get(number, []):
+                entry = invoice_state.get(invoice_id)
+                if not entry:
+                    continue
+                invoice = entry["invoice"]
+                if _allocation_amount(invoice_id, entry) <= _AMOUNT_TOLERANCE:
+                    continue
+                invoice_inn = str(invoice.counterparty.inn if invoice.counterparty else "").strip()
+                if not invoice_inn or invoice_inn != payer_inn:
+                    continue
+                if not _is_payment_after_invoice_issue(
+                    payment_dt=payment_dt,
+                    invoice_issued_at=invoice.issued_at,
+                ):
+                    continue
+                candidate_entries[invoice_id] = entry
+
+        if len(candidate_entries) < 2:
+            continue
+        allocation_invoice_ids = set(candidate_entries) & target_invoice_ids
+        if not allocation_invoice_ids:
+            continue
+
+        total = sum(
+            (
+                _allocation_amount(invoice_id, entry)
+                for invoice_id, entry in candidate_entries.items()
+            ),
+            Decimal("0.00"),
+        ).quantize(_MONEY_Q, rounding=ROUND_HALF_UP)
+        if not _amount_equal(operation_amount, total):
+            logger.info(
+                (
+                    "Мультисчетный платеж не распределен: statement_row_id=%s operation_id=%s "
+                    "amount=%s candidate_invoice_ids=%s allocation_target_invoice_ids=%s "
+                    "candidate_total=%s invoice_numbers_in_text=%s"
+                ),
+                operation.id,
+                operation.operation_id,
+                _format_money_ru(operation_amount),
+                sorted(candidate_entries),
+                sorted(allocation_invoice_ids),
+                _format_money_ru(total),
+                ",".join(sorted(mentioned_numbers)),
+            )
+            continue
+
+        note = "multi_invoice_numbers=" + ",".join(sorted(mentioned_numbers))
+        for invoice_id, entry in candidate_entries.items():
+            if invoice_id not in allocation_invoice_ids:
+                continue
+            allocations[invoice_id].append(
+                {
+                    "operation": operation,
+                    "amount": _allocation_amount(invoice_id, entry),
+                    "payment_dt": payment_dt,
+                    "note": note,
+                }
+            )
+
+    return allocations
+
+
 
 def _payment_datetime(op_row: Any) -> datetime | None:
     return _operation_effective_datetime(op_row)
@@ -1071,6 +1168,8 @@ def _log_statement_operation_context(
     *,
     prefix: str,
     operation: Any,
+    allocated_amount: Decimal | None = None,
+    allocation_note: str | None = None,
 ) -> None:
     purpose = str(operation.pay_purpose or "").strip()
     description = str(operation.description or "").strip()
@@ -1078,9 +1177,9 @@ def _log_statement_operation_context(
     logger.info(
         (
             "%s statement_row_id=%s account=%s operation_id=%s document_number=%s "
-            "amount=%s payment_dt=%s operation_date=%s doc_date=%s trxn_post_date=%s "
+            "amount=%s allocated_amount=%s payment_dt=%s operation_date=%s doc_date=%s trxn_post_date=%s "
             "payer_inn=%s payer_name=%s match_method=%s match_confidence=%s "
-            "invoice_numbers_in_text=%s pay_purpose=%s description=%s"
+            "invoice_numbers_in_text=%s allocation_note=%s pay_purpose=%s description=%s"
         ),
         prefix,
         operation.id,
@@ -1088,6 +1187,7 @@ def _log_statement_operation_context(
         operation.operation_id,
         operation.document_number,
         _format_money_ru(_operation_amount_from_row(operation)),
+        _format_money_ru(allocated_amount) if allocated_amount is not None else None,
         _format_dt_log(_payment_datetime(operation)),
         _format_dt_log(operation.operation_date),
         _format_dt_log(operation.doc_date),
@@ -1097,6 +1197,7 @@ def _log_statement_operation_context(
         operation.match_method,
         operation.match_confidence,
         invoice_numbers,
+        allocation_note,
         _log_text(purpose),
         _log_text(description),
     )
@@ -1128,6 +1229,7 @@ def _recalculate_payment_state(
     *,
     invoice_ids: set[int],
     preserve_paid_status_ids: set[int] | None = None,
+    extra_payment_allocations: dict[int, list[dict[str, Any]]] | None = None,
 ) -> tuple[dict[str, int], list[dict[str, Any]]]:
     from src.db.repos import invoices as inv_repo
     from src.db.repos import statement_operations as st_ops_repo
@@ -1135,6 +1237,7 @@ def _recalculate_payment_state(
     if not invoice_ids:
         return {"paid": 0, "partially_paid": 0, "issued": 0, "updated": 0}, []
     preserve_paid_status_ids = preserve_paid_status_ids or set()
+    extra_payment_allocations = extra_payment_allocations or {}
 
     invoice_list = inv_repo.get_for_payment_recalc(session, sorted(invoice_ids))
     matched = st_ops_repo.get_matched_incoming_for_invoices(session, invoice_ids=sorted(invoice_ids))
@@ -1142,7 +1245,7 @@ def _recalculate_payment_state(
     invoice_by_id: dict[int, Any] = {int(invoice.id): invoice for invoice in invoice_list}
     paid_sum: dict[int, Decimal] = defaultdict(lambda: Decimal("0.00"))
     paid_at: dict[int, datetime | None] = {}
-    payment_ops_by_invoice: dict[int, list[Any]] = defaultdict(list)
+    payment_ops_by_invoice: dict[int, list[tuple[Any, Decimal | None, str | None]]] = defaultdict(list)
     ignored_ops_by_invoice: dict[int, list[tuple[Any, str]]] = defaultdict(list)
 
     for op in matched:
@@ -1159,13 +1262,40 @@ def _recalculate_payment_state(
             ignored_ops_by_invoice[inv_id].append((op, "платеж раньше issued_at"))
             continue
 
-        payment_ops_by_invoice[inv_id].append(op)
+        payment_ops_by_invoice[inv_id].append((op, None, None))
         paid_sum[inv_id] += _operation_amount_from_row(op)
         if payment_dt is None:
             continue
         current = paid_at.get(inv_id)
         if current is None or payment_dt > current:
             paid_at[inv_id] = payment_dt
+
+    for inv_id, allocations in extra_payment_allocations.items():
+        invoice = invoice_by_id.get(int(inv_id))
+        if not invoice:
+            continue
+        for allocation in allocations:
+            op = allocation.get("operation")
+            amount = Decimal(str(allocation.get("amount") or 0)).quantize(_MONEY_Q, rounding=ROUND_HALF_UP)
+            if op is None or amount <= 0:
+                continue
+            payment_dt = allocation.get("payment_dt")
+            if not isinstance(payment_dt, datetime):
+                payment_dt = _payment_datetime(op)
+            if not _is_payment_after_invoice_issue(
+                payment_dt=payment_dt,
+                invoice_issued_at=invoice.issued_at,
+            ):
+                ignored_ops_by_invoice[int(inv_id)].append((op, "платеж раньше issued_at"))
+                continue
+            note = str(allocation.get("note") or "").strip() or None
+            payment_ops_by_invoice[int(inv_id)].append((op, amount, note))
+            paid_sum[int(inv_id)] += amount
+            if payment_dt is None:
+                continue
+            current = paid_at.get(int(inv_id))
+            if current is None or payment_dt > current:
+                paid_at[int(inv_id)] = payment_dt
 
     stats = {"paid": 0, "partially_paid": 0, "issued": 0, "updated": 0}
     newly_paid: list[dict[str, Any]] = []
@@ -1234,10 +1364,12 @@ def _recalculate_payment_state(
             _format_dt_log(new_paid_at),
             preserve_existing_paid,
         )
-        for op in payment_ops_by_invoice.get(invoice.id, []):
+        for op, allocated_amount, allocation_note in payment_ops_by_invoice.get(invoice.id, []):
             _log_statement_operation_context(
                 prefix=f"Операция выписки для обновления счета id={invoice.id} number={invoice.invoice_number}",
                 operation=op,
+                allocated_amount=allocated_amount,
+                allocation_note=allocation_note,
             )
         for op, reason in ignored_ops_by_invoice.get(invoice.id, []):
             _log_statement_operation_context(
@@ -1839,11 +1971,13 @@ def _run_matching(
             return 0, {"paid": 0, "partially_paid": 0, "issued": 0, "updated": 0}, []
 
         open_invoices = inv_repo.get_open_for_payment_matching(session)
+        paid_context_invoices: list[Any] = []
         paid_backfill_invoices: list[Any] = []
         if include_paid_backfill:
+            paid_context_invoices = inv_repo.get_paid_for_payment_backfill(session)
             paid_backfill_invoices = [
                 invoice
-                for invoice in inv_repo.get_paid_for_payment_backfill(session)
+                for invoice in paid_context_invoices
                 if _invoice_needs_payment_backfill(invoice)
             ]
             if paid_backfill_invoices:
@@ -1853,6 +1987,7 @@ def _run_matching(
                 )
 
         candidate_invoices = _merge_invoices_by_id(open_invoices, paid_backfill_invoices)
+        allocation_context_invoices = _merge_invoices_by_id(candidate_invoices, paid_context_invoices)
         if not candidate_invoices:
             logger.info("Нет счетов для автозачета оплат")
             return 0, {"paid": 0, "partially_paid": 0, "issued": 0, "updated": 0}, []
@@ -1896,8 +2031,45 @@ def _run_matching(
             if invoice.counterparty and invoice.counterparty.inn:
                 invoices_by_inn[invoice.counterparty.inn.strip()].append(invoice.id)
 
+        allocation_invoice_state = dict(invoice_state)
+        for invoice in allocation_context_invoices:
+            invoice_id = int(invoice.id)
+            if invoice_id in allocation_invoice_state:
+                continue
+            allocation_invoice_state[invoice_id] = {
+                "invoice": invoice,
+                "total": _invoice_total(invoice),
+                "paid": Decimal("0.00"),
+            }
+        allocation_invoices_by_number: dict[str, list[int]] = defaultdict(list)
+        for invoice in allocation_context_invoices:
+            normalized_number = _normalize_invoice_number(invoice.invoice_number)
+            allocation_invoices_by_number[normalized_number].append(int(invoice.id))
+
         if not open_invoice_ids:
             logger.info("Все счета-кандидаты уже полностью оплачены, новых операций матчить некуда")
+
+        multi_invoice_target_invoice_ids = set(open_invoice_ids) | paid_backfill_invoice_ids
+        multi_invoice_payment_allocations = _build_multi_invoice_payment_allocations(
+            unmatched,
+            invoice_state=allocation_invoice_state,
+            invoices_by_number=allocation_invoices_by_number,
+            target_invoice_ids=multi_invoice_target_invoice_ids,
+            preserve_paid_status_ids=paid_backfill_invoice_ids,
+        )
+        multi_invoice_payment_invoice_ids = set(multi_invoice_payment_allocations)
+        multi_invoice_paid_backfill_invoice_ids = multi_invoice_payment_invoice_ids & paid_backfill_invoice_ids
+        multi_invoice_normal_invoice_ids = multi_invoice_payment_invoice_ids - paid_backfill_invoice_ids
+        if multi_invoice_payment_invoice_ids:
+            logger.info(
+                (
+                    "Мультисчетные платежи: %s счетов будут обновлены по распределенным операциям "
+                    "(обычные=%s, paid-backfill=%s)"
+                ),
+                len(multi_invoice_payment_invoice_ids),
+                len(multi_invoice_normal_invoice_ids),
+                len(multi_invoice_paid_backfill_invoice_ids),
+            )
 
         matched_count = 0
         touched_invoice_ids: set[int] = set()
@@ -1948,10 +2120,10 @@ def _run_matching(
                 "Ручной backfill оплат: %s paid-счетов доукомплектованы новыми операциями на полную сумму",
                 len(touched_paid_backfill_ready_ids),
             )
-        paid_backfill_ids_with_operations = (
+        paid_backfill_ids_with_direct_operations = (
             touched_invoice_ids | (paid_backfill_invoice_ids & matched_invoice_ids)
         ) & paid_backfill_invoice_ids
-        partial_paid_backfill_ids = paid_backfill_ids_with_operations - (
+        partial_paid_backfill_ids = paid_backfill_ids_with_direct_operations - (
             touched_paid_backfill_ready_ids | backfill_recalc_ids
         )
         if partial_paid_backfill_ids:
@@ -1964,7 +2136,13 @@ def _run_matching(
             )
 
         paid_backfill_recalc_ids = (
-            touched_paid_backfill_ready_ids | backfill_recalc_ids | partial_paid_backfill_ids
+            touched_paid_backfill_ready_ids
+            | backfill_recalc_ids
+            | partial_paid_backfill_ids
+            | multi_invoice_paid_backfill_invoice_ids
+        )
+        paid_backfill_ids_with_operations = (
+            paid_backfill_ids_with_direct_operations | multi_invoice_paid_backfill_invoice_ids
         )
         paid_backfill_without_operations = paid_backfill_invoice_ids - paid_backfill_ids_with_operations
         if paid_backfill_without_operations:
@@ -1973,12 +2151,13 @@ def _run_matching(
                 len(paid_backfill_without_operations),
             )
 
-        recalc_invoice_ids = normal_touched_ids | paid_backfill_recalc_ids
+        recalc_invoice_ids = normal_touched_ids | multi_invoice_normal_invoice_ids | paid_backfill_recalc_ids
         if recalc_invoice_ids:
             recalc_stats, newly_paid = _recalculate_payment_state(
                 session,
                 invoice_ids=recalc_invoice_ids,
                 preserve_paid_status_ids=paid_backfill_recalc_ids,
+                extra_payment_allocations=multi_invoice_payment_allocations,
             )
             if dry_run:
                 session.rollback()
