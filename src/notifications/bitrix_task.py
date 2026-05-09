@@ -163,17 +163,6 @@ def create_invoice_task_with_meta(
 
     invoice_amount = _calculate_invoice_amount(invoice_items)
     task_structure_text = _build_task_structure_text(invoice_items)
-    text = _build_task_description(
-        counterparty_name=counterparty_name,
-        counterparty_contract=counterparty_contract,
-        invoice_number=invoice_number,
-        invoice_amount=invoice_amount,
-        tbank_invoice_id=tbank_invoice_id,
-        invoice_link=invoice_link,
-        pdf_url=pdf_url,
-        period_text=period_text,
-        task_structure_text=task_structure_text,
-    )
     deadline = _build_task_deadline()
     task_title = _build_task_title(
         invoice_number=invoice_number,
@@ -197,6 +186,18 @@ def create_invoice_task_with_meta(
     uploaded_file_ids = _upload_task_file_attachments(
         invoice_number=invoice_number,
         task_file_attachments=task_file_attachments,
+    )
+    text = _build_task_description(
+        counterparty_name=counterparty_name,
+        counterparty_contract=counterparty_contract,
+        invoice_number=invoice_number,
+        invoice_amount=invoice_amount,
+        tbank_invoice_id=tbank_invoice_id,
+        invoice_link=invoice_link,
+        pdf_url=pdf_url,
+        period_text=period_text,
+        task_structure_text=task_structure_text,
+        has_extra_task_files=bool(uploaded_file_ids),
     )
     webdav_file_ids = [*_TASK_WEBDAV_FILE_IDS, *uploaded_file_ids]
     task_id: int | None = None
@@ -511,6 +512,7 @@ def _build_task_description(
     pdf_url: str | None = None,
     period_text: str | None = None,
     task_structure_text: str | None = None,
+    has_extra_task_files: bool = False,
 ) -> str:
     """
     Описание задачи для Bitrix24 в BBCode.
@@ -525,15 +527,16 @@ def _build_task_description(
     if period_text:
         lines.append(f"[B]Период[/B]: {period_text}")
     if task_structure_text:
-        lines.append(f"[B]Тип[/B]: {task_structure_text}")
+        lines.append(f"[B]Структура[/B]: {task_structure_text}")
     if invoice_amount is not None:
         lines.append(f"[B]Сумма[/B]: {_format_money(invoice_amount)}")
     if pdf_url:
         lines.append(f"[B]PDF[/B]: [URL={pdf_url}]Документ[/URL]")
+    extra_file_suffix = " (+ приложенный файл)" if has_extra_task_files else ""
     lines.extend(
         [
             "",
-            "[B]Необходимо в [URL=https://business.tbank.ru/sme/invoices/outgoing/submitted]ТБанке[/URL] создать Акт и УПД для данного Счета и отправить все три документа в ЭДО[/B]",
+            f"[B]Необходимо в [URL=https://business.tbank.ru/sme/invoices/outgoing/submitted]ТБанке[/URL] создать Акт и УПД для данного Счета и отправить все три документа в ЭДО{extra_file_suffix}[/B]",
             "",
             "[B]ВНИМАНИЕ:[/B] Для УПД обязательно указать \"Основание передачи\" - детали в приложенном файле.",
         ]
