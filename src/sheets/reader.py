@@ -14,6 +14,8 @@ from urllib.parse import parse_qs, urlparse
 import gspread
 from google.oauth2.service_account import Credentials
 
+from src.sheets.waybill_notes import extract_waybill_token
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 SCHEMA_PATH = PROJECT_ROOT / "config" / "schema.json"
 CREDENTIALS_PATH = PROJECT_ROOT / "credentials" / "google_service_account.json"
@@ -76,7 +78,8 @@ def read_works(
     При last_date обрабатываются только строки с датой >= last_date.
 
     Возвращает список словарей с ключами:
-    date, counterparty_name, note, structure, operation, object_count, revenue, sheet_row_hash
+    date, counterparty_name, note, structure, operation, object_count, revenue,
+    sheet_row_hash, waybill_file_token
     """
     schema = _load_schema()
     url = sheet_url or os.environ.get("GOOGLE_SHEET_URL") or schema.get("google_sheet_url")
@@ -128,7 +131,8 @@ def read_works(
         if last_date and parsed is not None and parsed.date() < last_date:
             continue
         counterparty = str(row.get("Контрагент", "") or "").strip()
-        note = str(row.get("Примечание", "") or "").strip()
+        raw_note = str(row.get("Примечание", "") or "").strip()
+        note, waybill_file_token = extract_waybill_token(raw_note)
         structure = str(row.get("Структура", "") or "").strip()
         operation = str(row.get("Операция", "") or "").strip()
         if operation != "Поступление по основной деятельности":
@@ -137,7 +141,7 @@ def read_works(
         revenue = str(row.get("Выручка", "") or "").strip()
 
         sheet_row_hash = hashlib.sha256(
-            f"{date_str}|{counterparty}|{note}|{structure}|{operation}|{object_count}".encode("utf-8")
+            f"{date_str}|{counterparty}|{raw_note}|{structure}|{operation}|{object_count}".encode("utf-8")
         ).hexdigest()
 
         works.append({
@@ -149,6 +153,7 @@ def read_works(
             "object_count": object_count,
             "revenue": revenue,
             "sheet_row_hash": sheet_row_hash,
+            "waybill_file_token": waybill_file_token,
         })
     return works
 

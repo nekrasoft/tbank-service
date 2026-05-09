@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from src.db.connection import get_session
 from src.db.repos import counterparties as cp_repo
 from src.db.repos import works as works_repo
+from src.db.repos import works_files as works_files_repo
 from src.sheets.reader import read_counterparties, read_works
 
 logger = logging.getLogger(__name__)
@@ -265,6 +266,34 @@ def _sync_counterparties_rows(session: Session, rows: list[dict]) -> tuple[int, 
     return created, updated, skipped
 
 
+def _link_waybill_file(session: Session, row: dict, work_id: int) -> str:
+    token = str(row.get("waybill_file_token") or "").strip()
+    if not token:
+        return "none"
+
+    work_file = works_files_repo.link_to_work_by_token(
+        session,
+        file_token=token,
+        work_id=work_id,
+    )
+    if work_file is None:
+        logger.warning(
+            "Синхронизация: в строке hash=%s указан путевой лист %s, но файл не найден в works_files",
+            row.get("sheet_row_hash"),
+            token,
+        )
+        return "missing"
+    if work_file.work_id != work_id:
+        logger.warning(
+            "Синхронизация: путевой лист %s уже привязан к work_id=%s, текущая работа work_id=%s",
+            token,
+            work_file.work_id,
+            work_id,
+        )
+        return "conflict"
+    return "linked"
+
+
 def sync_sheets_to_mysql(
     sheet_url: str | None = None,
     sheet_name: str | None = None,
@@ -294,6 +323,9 @@ def sync_sheets_to_mysql(
 
         added = 0
         revenue_updated = 0
+        waybill_linked = 0
+        waybill_missing = 0
+        waybill_conflicts = 0
         for row in rows:
             parsed_revenue = _parse_revenue(row.get("revenue"))
             if row.get("revenue") and parsed_revenue is None:
@@ -303,13 +335,21 @@ def sync_sheets_to_mysql(
                     row.get("sheet_row_hash"),
                 )
 
-            if works_repo.exists_by_hash(session, row["sheet_row_hash"]):
+            existing_work = works_repo.get_by_hash(session, row["sheet_row_hash"])
+            if existing_work is not None:
                 if parsed_revenue is not None:
                     revenue_updated += works_repo.update_revenue_by_hash(
                         session,
                         sheet_row_hash=row["sheet_row_hash"],
                         revenue=parsed_revenue,
                     )
+                link_status = _link_waybill_file(session, row, existing_work.id)
+                if link_status == "linked":
+                    waybill_linked += 1
+                elif link_status == "missing":
+                    waybill_missing += 1
+                elif link_status == "conflict":
+                    waybill_conflicts += 1
                 continue
             parsed_date = _parse_date(row["date"])
             if parsed_date is None:
@@ -319,7 +359,7 @@ def sync_sheets_to_mysql(
                     row.get("sheet_row_hash"),
                 )
                 continue
-            works_repo.create(
+            work = works_repo.create(
                 session,
                 date=parsed_date,
                 counterparty_name=row["counterparty_name"],
@@ -330,16 +370,26 @@ def sync_sheets_to_mysql(
                 revenue=parsed_revenue,
                 sheet_row_hash=row["sheet_row_hash"],
             )
+            link_status = _link_waybill_file(session, row, work.id)
+            if link_status == "linked":
+                waybill_linked += 1
+            elif link_status == "missing":
+                waybill_missing += 1
+            elif link_status == "conflict":
+                waybill_conflicts += 1
             added += 1
 
         session.commit()
         logger.info(
-            "Синхронизация: контрагенты — создано %s, обновлено %s, пропущено %s; работы — добавлено %s, обновлено выручки %s (обработано строк: %s)",
+            "Синхронизация: контрагенты — создано %s, обновлено %s, пропущено %s; работы — добавлено %s, обновлено выручки %s; путевые листы — привязано %s, не найдено %s, конфликты %s (обработано строк: %s)",
             cp_created,
             cp_updated,
             cp_skipped,
             added,
             revenue_updated,
+            waybill_linked,
+            waybill_missing,
+            waybill_conflicts,
             len(rows),
         )
         return added

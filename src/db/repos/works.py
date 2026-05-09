@@ -124,6 +124,14 @@ def exists_by_hash(session: Session, sheet_row_hash: str) -> bool:
     return result.scalars().first() is not None
 
 
+def get_by_hash(session: Session, sheet_row_hash: str) -> Work | None:
+    """Получение работы по хешу строки Google Sheets."""
+    result = session.execute(
+        select(Work).where(Work.sheet_row_hash == sheet_row_hash).limit(1)
+    )
+    return result.scalars().first()
+
+
 def create(
     session: Session,
     *,

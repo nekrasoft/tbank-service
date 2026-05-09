@@ -12,6 +12,7 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    BigInteger,
     Index,
     Integer,
     Numeric,
@@ -19,6 +20,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
+from sqlalchemy.dialects.mysql import MEDIUMBLOB
 from sqlalchemy.orm import declarative_base, relationship
 
 Base = declarative_base()
@@ -110,9 +112,36 @@ class Work(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     invoice = relationship("Invoice", backref="works")
+    files = relationship("WorkFile", backref="work")
     __table_args__ = (
         Index("ix_works_invoice_null", "invoice_id"),
         Index("ix_works_counterparty_note", "counterparty_name", "note"),
+    )
+
+
+class WorkFile(Base):
+    """Файл подтверждения выполненной работы."""
+    __tablename__ = "works_files"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    file_token = Column(String(64), nullable=False, unique=True)
+    work_id = Column(Integer, ForeignKey("works.id", ondelete="SET NULL"), nullable=True)
+    source = Column(String(20), nullable=False, comment="telegram или max")
+    source_chat_id = Column(String(64), nullable=True)
+    source_user_id = Column(String(64), nullable=True)
+    source_message_id = Column(String(128), nullable=True)
+    source_file_id = Column(String(512), nullable=True)
+    file_name = Column(String(255), nullable=True)
+    content_type = Column(String(100), nullable=True)
+    file_size = Column(BigInteger, nullable=False)
+    file_sha256 = Column(String(64), nullable=False)
+    file_data = Column(MEDIUMBLOB(), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    linked_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index("ix_works_files_work_id", "work_id"),
+        Index("ix_works_files_source", "source"),
     )
 
 
