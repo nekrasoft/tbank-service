@@ -5,10 +5,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
+import json
 import logging
 import mimetypes
 import os
 from datetime import date, datetime
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -24,6 +26,8 @@ from src.invoice.window import add_business_days
 
 logger = logging.getLogger(__name__)
 
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+_OPERATIONS_PATH = _PROJECT_ROOT / "config" / "operations.json"
 _TASK_WEBHOOK_ENV = "BITRIX24_TASK_WEBHOOK_URL"
 _DEAL_WEBHOOK_ENV = "BITRIX24_DEAL_WEBHOOK_URL"
 _TASK_FILES_FOLDER_ENV = "BITRIX24_TASK_FILES_FOLDER_ID"
@@ -59,7 +63,9 @@ _DEAL_DIRECTION_FIELD = "UF_CRM_1680515310897"
 _DEAL_DIRECTION_VALUE = 4818
 _DEAL_ADDRESS = "Киров"
 _DEAL_DEFAULT_PRODUCT_NAME = "Услуга по вывозу мусора из контейнера 8 м3"
+_TASK_STRUCTURE_DEFAULT_TEXT = "ЮЛ - Контейнеры"
 _TASK_PAYMENT_COMMENT_TEXT = "[T-Bank] Оплата поступила"
+_OPERATION_STRUCTURES_BY_TYPE: dict[str, str] = {}
 _task_webhook_missing_logged = False
 _deal_webhook_missing_logged = False
 _task_files_folder_missing_logged = False
@@ -156,7 +162,7 @@ def create_invoice_task_with_meta(
         return None
 
     invoice_amount = _calculate_invoice_amount(invoice_items)
-    operation_type_text = _build_task_operation_type_text(invoice_items)
+    task_structure_text = _build_task_structure_text(invoice_items)
     text = _build_task_description(
         counterparty_name=counterparty_name,
         counterparty_contract=counterparty_contract,
@@ -166,7 +172,7 @@ def create_invoice_task_with_meta(
         invoice_link=invoice_link,
         pdf_url=pdf_url,
         period_text=period_text,
-        operation_type_text=operation_type_text,
+        task_structure_text=task_structure_text,
     )
     deadline = _build_task_deadline()
     task_title = _build_task_title(
@@ -504,7 +510,7 @@ def _build_task_description(
     invoice_link: str | None = None,
     pdf_url: str | None = None,
     period_text: str | None = None,
-    operation_type_text: str | None = None,
+    task_structure_text: str | None = None,
 ) -> str:
     """
     Описание задачи для Bitrix24 в BBCode.
@@ -518,8 +524,8 @@ def _build_task_description(
     ]
     if period_text:
         lines.append(f"[B]Период[/B]: {period_text}")
-    if operation_type_text:
-        lines.append(f"[B]Тип[/B]: {operation_type_text}")
+    if task_structure_text:
+        lines.append(f"[B]Тип[/B]: {task_structure_text}")
     if invoice_amount is not None:
         lines.append(f"[B]Сумма[/B]: {_format_money(invoice_amount)}")
     if pdf_url:
@@ -535,19 +541,51 @@ def _build_task_description(
     return "\n".join(lines)
 
 
-def _build_task_operation_type_text(invoice_items: list[dict[str, Any]] | None) -> str | None:
-    """Формирует строку operation_type для описания задачи."""
-    operation_types: list[str] = []
+def _build_task_structure_text(invoice_items: list[dict[str, Any]] | None) -> str:
+    """Формирует строку структуры для описания задачи."""
+    structures_by_type = _load_operation_structures_by_type()
+    structures: list[str] = []
     seen: set[str] = set()
 
     for item in invoice_items or []:
         operation_type = _normalize_operation_type(item.get("operation_type"))
-        if not operation_type or operation_type in seen:
+        if not operation_type:
             continue
-        operation_types.append(operation_type)
-        seen.add(operation_type)
 
-    return ", ".join(operation_types) if operation_types else None
+        structure = structures_by_type.get(operation_type)
+        if not structure or structure in seen:
+            continue
+        structures.append(structure)
+        seen.add(structure)
+
+    return ", ".join(structures) if structures else _TASK_STRUCTURE_DEFAULT_TEXT
+
+
+def _load_operation_structures_by_type() -> dict[str, str]:
+    """Загружает маппинг operation_type -> структура из config/operations.json."""
+    global _OPERATION_STRUCTURES_BY_TYPE
+    if _OPERATION_STRUCTURES_BY_TYPE:
+        return _OPERATION_STRUCTURES_BY_TYPE
+
+    try:
+        with open(_OPERATIONS_PATH, "r", encoding="utf-8") as f:
+            operations = json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        logger.warning(
+            "Bitrix24 task: не удалось загрузить структуры операций из %s — %s",
+            _OPERATIONS_PATH,
+            e,
+        )
+        return {}
+
+    for operation_type, data in operations.items():
+        if not isinstance(data, dict):
+            continue
+        normalized_operation_type = _normalize_operation_type(operation_type)
+        structure = str(data.get("структура") or "").strip()
+        if normalized_operation_type and structure:
+            _OPERATION_STRUCTURES_BY_TYPE[normalized_operation_type] = structure
+    return _OPERATION_STRUCTURES_BY_TYPE
 
 
 def _calculate_invoice_amount(invoice_items: list[dict[str, Any]] | None) -> Decimal | None:
