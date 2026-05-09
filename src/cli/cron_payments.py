@@ -872,7 +872,7 @@ def _match_operation_to_invoice(
     invoices_by_number: dict[str, list[int]],
     invoices_by_inn: dict[str, list[int]],
     open_invoice_ids: list[int],
-    invoice_number_only_invoice_ids: set[int] | None = None,
+    strict_amount_fallback_invoice_ids: set[int] | None = None,
 ) -> dict[str, Any] | None:
     amount = _operation_amount_from_row(operation)
     if amount <= 0:
@@ -883,10 +883,10 @@ def _match_operation_to_invoice(
     if not payer_inn:
         return None
     payer_name = operation.payer_name or operation.counterparty_name
-    invoice_number_only_invoice_ids = invoice_number_only_invoice_ids or set()
+    strict_amount_fallback_invoice_ids = strict_amount_fallback_invoice_ids or set()
 
-    def _can_use_fallback(invoice_id: int) -> bool:
-        return invoice_id not in invoice_number_only_invoice_ids
+    def _uses_strict_amount_fallback(invoice_id: int) -> bool:
+        return invoice_id in strict_amount_fallback_invoice_ids
 
     def _has_required_inn(invoice: Any) -> bool:
         if not invoice or not invoice.counterparty:
@@ -937,10 +937,11 @@ def _match_operation_to_invoice(
             }
 
     # 2) Надежный fallback: уникальный ИНН + сумма в пределах остатка.
+    # Для paid-backfill счетов fallback строже: только точная сумма и только
+    # если нет обычных issued/partially_paid кандидатов.
     candidates = []
+    strict_amount_candidates = []
     for invoice_id in invoices_by_inn.get(payer_inn, []):
-        if not _can_use_fallback(invoice_id):
-            continue
         entry = invoice_state.get(invoice_id)
         if not entry:
             continue
@@ -954,6 +955,10 @@ def _match_operation_to_invoice(
             continue
         remaining = _remaining_amount(entry)
         if remaining <= 0:
+            continue
+        if _uses_strict_amount_fallback(invoice_id):
+            if _amount_equal(amount, remaining):
+                strict_amount_candidates.append(invoice_id)
             continue
         if amount - remaining > _AMOUNT_TOLERANCE:
             continue
@@ -975,11 +980,18 @@ def _match_operation_to_invoice(
                 "method": "payer_inn_amount_earliest",
                 "amount": amount,
             }
+    if len(strict_amount_candidates) == 1:
+        return {
+            "invoice_id": strict_amount_candidates[0],
+            "confidence": Decimal("0.84"),
+            "method": "payer_inn_exact_amount_paid_backfill",
+            "amount": amount,
+        }
 
     # 3) Осторожный fallback: уникальное совпадение по имени + сумме.
     scored_name: list[tuple[Decimal, int, str]] = []
     for invoice_id in open_invoice_ids:
-        if not _can_use_fallback(invoice_id):
+        if _uses_strict_amount_fallback(invoice_id):
             continue
         entry = invoice_state.get(invoice_id)
         if not entry:
@@ -1723,6 +1735,11 @@ def _run_matching(
             for invoice_id in paid_backfill_invoice_ids & matched_invoice_ids
             if _invoice_state_is_fully_paid(invoice_state.get(invoice_id))
         }
+        if backfill_recalc_ids:
+            logger.info(
+                "Ручной backfill оплат: %s paid-счетов уже имеют привязанные операции на полную сумму",
+                len(backfill_recalc_ids),
+            )
 
         invoices_by_number: dict[str, list[int]] = defaultdict(list)
         invoices_by_inn: dict[str, list[int]] = defaultdict(list)
@@ -1755,7 +1772,7 @@ def _run_matching(
                 invoices_by_number=invoices_by_number,
                 invoices_by_inn=invoices_by_inn,
                 open_invoice_ids=open_invoice_ids,
-                invoice_number_only_invoice_ids=paid_backfill_invoice_ids,
+                strict_amount_fallback_invoice_ids=paid_backfill_invoice_ids,
             )
             if not decision:
                 continue
@@ -1787,6 +1804,11 @@ def _run_matching(
             for invoice_id in touched_invoice_ids & paid_backfill_invoice_ids
             if _invoice_state_is_fully_paid(invoice_state.get(invoice_id))
         }
+        if touched_paid_backfill_ready_ids:
+            logger.info(
+                "Ручной backfill оплат: %s paid-счетов доукомплектованы новыми операциями на полную сумму",
+                len(touched_paid_backfill_ready_ids),
+            )
         paid_backfill_ids_with_operations = (
             touched_invoice_ids | (paid_backfill_invoice_ids & matched_invoice_ids)
         ) & paid_backfill_invoice_ids
