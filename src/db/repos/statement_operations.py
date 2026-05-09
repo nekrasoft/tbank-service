@@ -100,7 +100,12 @@ def upsert_operation(
     return row, True
 
 
-def get_unmatched_incoming(session: Session, *, limit: int | None = None) -> list[TBankStatementOperation]:
+def get_unmatched_incoming(
+    session: Session,
+    *,
+    limit: int | None = None,
+    operation_date_from: datetime | None = None,
+) -> list[TBankStatementOperation]:
     """Невсмэтченные входящие операции, пригодные для автопривязки к счетам."""
     stmt = (
         select(TBankStatementOperation)
@@ -114,6 +119,13 @@ def get_unmatched_incoming(session: Session, *, limit: int | None = None) -> lis
         )
         .order_by(TBankStatementOperation.operation_date.asc(), TBankStatementOperation.id.asc())
     )
+    if operation_date_from is not None:
+        stmt = stmt.where(
+            or_(
+                TBankStatementOperation.operation_date.is_(None),
+                TBankStatementOperation.operation_date >= operation_date_from,
+            )
+        )
     if limit is not None and limit > 0:
         stmt = stmt.limit(limit)
 

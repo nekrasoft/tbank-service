@@ -1153,6 +1153,15 @@ def _payment_datetime(op_row: Any) -> datetime | None:
     return _operation_effective_datetime(op_row)
 
 
+def _operation_on_or_after(operation: Any, from_utc: datetime | None) -> bool:
+    if from_utc is None:
+        return True
+    operation_dt = _to_utc_aware(_payment_datetime(operation))
+    if operation_dt is None:
+        return True
+    return operation_dt >= from_utc
+
+
 def _format_dt_log(value: datetime | None) -> str | None:
     return value.isoformat(sep=" ") if value else None
 
@@ -1955,6 +1964,7 @@ def _run_matching(
     dry_run: bool = False,
     include_paid_backfill: bool = False,
     session: Any | None = None,
+    statement_from_utc: datetime | None = None,
 ) -> tuple[int, dict[str, int], list[dict[str, Any]]]:
     from src.db.repos import invoices as inv_repo
     from src.db.repos import statement_operations as st_ops_repo
@@ -1965,7 +1975,24 @@ def _run_matching(
 
         session = get_session()
     try:
-        unmatched = st_ops_repo.get_unmatched_incoming(session, limit=unmatched_limit)
+        unmatched = st_ops_repo.get_unmatched_incoming(
+            session,
+            limit=unmatched_limit,
+            operation_date_from=_to_utc_naive(statement_from_utc) if statement_from_utc else None,
+        )
+        if statement_from_utc is not None:
+            before_filter = len(unmatched)
+            unmatched = [
+                operation
+                for operation in unmatched
+                if _operation_on_or_after(operation, statement_from_utc)
+            ]
+            if before_filter != len(unmatched):
+                logger.info(
+                    "Фильтр statement-date: из unmatched операций после точной проверки окна оставлено %s из %s",
+                    len(unmatched),
+                    before_filter,
+                )
         if not unmatched and not include_paid_backfill:
             logger.info("Нет новых неприлинкованных входящих операций")
             return 0, {"paid": 0, "partially_paid": 0, "issued": 0, "updated": 0}, []
@@ -2004,9 +2031,14 @@ def _run_matching(
             for operation in matched_incoming
             if operation.matched_invoice_id
         }
+        matched_window_invoice_ids = {
+            int(operation.matched_invoice_id)
+            for operation in matched_incoming
+            if operation.matched_invoice_id and _operation_on_or_after(operation, statement_from_utc)
+        }
         backfill_recalc_ids = {
             invoice_id
-            for invoice_id in paid_backfill_invoice_ids & matched_invoice_ids
+            for invoice_id in paid_backfill_invoice_ids & matched_window_invoice_ids
             if _invoice_state_is_fully_paid(invoice_state.get(invoice_id))
         }
         if backfill_recalc_ids:
@@ -2121,7 +2153,7 @@ def _run_matching(
                 len(touched_paid_backfill_ready_ids),
             )
         paid_backfill_ids_with_direct_operations = (
-            touched_invoice_ids | (paid_backfill_invoice_ids & matched_invoice_ids)
+            touched_invoice_ids | (paid_backfill_invoice_ids & matched_window_invoice_ids)
         ) & paid_backfill_invoice_ids
         partial_paid_backfill_ids = paid_backfill_ids_with_direct_operations - (
             touched_paid_backfill_ready_ids | backfill_recalc_ids
@@ -2182,6 +2214,13 @@ def _run_matching(
     finally:
         if own_session:
             session.close()
+
+
+def _statement_from_utc(statement_date: date | None) -> datetime | None:
+    if statement_date is None:
+        return None
+    from_naive, _ = _utc_naive_bounds_for_business_date(statement_date)
+    return _to_utc_aware(from_naive)
 
 
 
@@ -2318,6 +2357,7 @@ def main() -> None:
                     dry_run=True,
                     include_paid_backfill=True,
                     session=preview_session,
+                    statement_from_utc=_statement_from_utc(args.statement_date),
                 )
             finally:
                 preview_session.close()
@@ -2440,6 +2480,7 @@ def main() -> None:
     matched_count, recalc_stats, _ = _run_matching(
         unmatched_limit,
         include_paid_backfill=args.statement_date is not None,
+        statement_from_utc=_statement_from_utc(args.statement_date),
     )
     payment_thank_stats = _send_due_payment_thank_you_emails(limit=payment_thank_email_limit)
 
