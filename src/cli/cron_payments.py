@@ -1041,6 +1041,48 @@ def _format_dt_log(value: datetime | None) -> str | None:
     return value.isoformat(sep=" ") if value else None
 
 
+def _log_text(value: Any, *, max_len: int = 1200) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) <= max_len:
+        return text
+    return f"{text[:max_len]}..."
+
+
+def _log_statement_operation_context(
+    *,
+    prefix: str,
+    operation: Any,
+) -> None:
+    purpose = str(operation.pay_purpose or "").strip()
+    description = str(operation.description or "").strip()
+    invoice_numbers = ",".join(sorted(_extract_invoice_numbers(purpose, description))) or None
+    logger.info(
+        (
+            "%s statement_row_id=%s account=%s operation_id=%s document_number=%s "
+            "amount=%s payment_dt=%s operation_date=%s doc_date=%s trxn_post_date=%s "
+            "payer_inn=%s payer_name=%s match_method=%s match_confidence=%s "
+            "invoice_numbers_in_text=%s pay_purpose=%s description=%s"
+        ),
+        prefix,
+        operation.id,
+        operation.account_number,
+        operation.operation_id,
+        operation.document_number,
+        _format_money_ru(_operation_amount_from_row(operation)),
+        _format_dt_log(_payment_datetime(operation)),
+        _format_dt_log(operation.operation_date),
+        _format_dt_log(operation.doc_date),
+        _format_dt_log(operation.trxn_post_date),
+        operation.payer_inn or operation.counterparty_inn,
+        _log_text(operation.payer_name or operation.counterparty_name),
+        operation.match_method,
+        operation.match_confidence,
+        invoice_numbers,
+        _log_text(purpose),
+        _log_text(description),
+    )
+
+
 def _is_payment_after_invoice_issue(
     *,
     payment_dt: datetime | None,
@@ -1081,6 +1123,8 @@ def _recalculate_payment_state(
     invoice_by_id: dict[int, Any] = {int(invoice.id): invoice for invoice in invoice_list}
     paid_sum: dict[int, Decimal] = defaultdict(lambda: Decimal("0.00"))
     paid_at: dict[int, datetime | None] = {}
+    payment_ops_by_invoice: dict[int, list[Any]] = defaultdict(list)
+    ignored_ops_by_invoice: dict[int, list[Any]] = defaultdict(list)
 
     for op in matched:
         inv_id = int(op.matched_invoice_id)
@@ -1090,8 +1134,10 @@ def _recalculate_payment_state(
             payment_dt=payment_dt,
             invoice_issued_at=invoice.issued_at,
         ):
+            ignored_ops_by_invoice[inv_id].append(op)
             continue
 
+        payment_ops_by_invoice[inv_id].append(op)
         paid_sum[inv_id] += _operation_amount_from_row(op)
         if payment_dt is None:
             continue
@@ -1107,7 +1153,25 @@ def _recalculate_payment_state(
         prev_status = str(invoice.status or "").strip()
 
         preserve_existing_paid = invoice.id in preserve_paid_status_ids and prev_status == "paid"
-        if preserve_existing_paid and paid > _AMOUNT_TOLERANCE:
+        if preserve_existing_paid and paid <= _AMOUNT_TOLERANCE:
+            logger.info(
+                (
+                    "Backfill оплаты счета id=%s number=%s пропущен: "
+                    "нет учитываемых операций после даты выставления; status=%s paid_amount=%s paid_at=%s"
+                ),
+                invoice.id,
+                invoice.invoice_number,
+                invoice.status,
+                _format_money_ru(_invoice_paid_amount(invoice)),
+                _format_dt_log(invoice.paid_at),
+            )
+            for op in ignored_ops_by_invoice.get(invoice.id, []):
+                _log_statement_operation_context(
+                    prefix=f"Операция выписки не учтена для счета id={invoice.id} number={invoice.invoice_number}: платеж раньше issued_at",
+                    operation=op,
+                )
+            continue
+        if preserve_existing_paid:
             new_status = "paid"
             new_paid_at = paid_at.get(invoice.id) or invoice.paid_at or datetime.utcnow()
             stats["paid"] += 1
@@ -1148,6 +1212,16 @@ def _recalculate_payment_state(
             _format_dt_log(new_paid_at),
             preserve_existing_paid,
         )
+        for op in payment_ops_by_invoice.get(invoice.id, []):
+            _log_statement_operation_context(
+                prefix=f"Операция выписки для обновления счета id={invoice.id} number={invoice.invoice_number}",
+                operation=op,
+            )
+        for op in ignored_ops_by_invoice.get(invoice.id, []):
+            _log_statement_operation_context(
+                prefix=f"Операция выписки не учтена для счета id={invoice.id} number={invoice.invoice_number}: платеж раньше issued_at",
+                operation=op,
+            )
         updated = inv_repo.update_payment_state(
             session,
             invoice_id=invoice.id,
