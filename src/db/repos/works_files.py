@@ -18,6 +18,31 @@ def get_by_token(session: Session, file_token: str) -> WorkFile | None:
     return result.scalars().first()
 
 
+def get_by_work_ids(session: Session, work_ids: list[int]) -> list[WorkFile]:
+    """Получение файлов, привязанных к списку работ."""
+    normalized_ids: list[int] = []
+    seen: set[int] = set()
+    for raw_id in work_ids:
+        try:
+            work_id = int(raw_id)
+        except (TypeError, ValueError):
+            continue
+        if work_id <= 0 or work_id in seen:
+            continue
+        seen.add(work_id)
+        normalized_ids.append(work_id)
+
+    if not normalized_ids:
+        return []
+
+    result = session.execute(
+        select(WorkFile)
+        .where(WorkFile.work_id.in_(normalized_ids))
+        .order_by(WorkFile.work_id, WorkFile.id)
+    )
+    return list(result.scalars().all())
+
+
 def link_to_work_by_token(
     session: Session,
     *,

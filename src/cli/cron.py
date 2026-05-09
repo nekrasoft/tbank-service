@@ -96,6 +96,29 @@ def _get_uninvoiced_counterparties() -> list[str]:
         session.close()
 
 
+def _build_bitrix_task_file_attachments(work_files: list[Any]) -> list[dict[str, Any]]:
+    """Готовит файлы работ к загрузке в задачу Bitrix24."""
+    attachments: list[dict[str, Any]] = []
+    for work_file in work_files:
+        file_data = getattr(work_file, "file_data", None)
+        if isinstance(file_data, memoryview):
+            file_data = file_data.tobytes()
+        elif isinstance(file_data, bytearray):
+            file_data = bytes(file_data)
+
+        attachments.append(
+            {
+                "work_file_id": getattr(work_file, "id", None),
+                "work_id": getattr(work_file, "work_id", None),
+                "file_token": getattr(work_file, "file_token", None),
+                "file_name": getattr(work_file, "file_name", None),
+                "content_type": getattr(work_file, "content_type", None),
+                "file_data": file_data if isinstance(file_data, bytes) else b"",
+            }
+        )
+    return attachments
+
+
 def _prepare_pending_invoices(counterparty_name: str, run_at: datetime) -> list[dict[str, Any]]:
     """Подготовка и фиксация одного или нескольких pending-счётов в БД."""
     from src.db.connection import get_session
@@ -104,6 +127,7 @@ def _prepare_pending_invoices(counterparty_name: str, run_at: datetime) -> list[
     from src.db.repos import invoices as inv_repo
     from src.db.repos import invoice_number as num_repo
     from src.db.repos import works as works_repo
+    from src.db.repos import works_files as works_files_repo
     from src.invoice.builder import (
         build_invoice_comment,
         build_custom_payment_purpose,
@@ -182,6 +206,9 @@ def _prepare_pending_invoices(counterparty_name: str, run_at: datetime) -> list[
         prepared_invoices: list[dict[str, Any]] = []
         for group in work_groups:
             group_works = group.works
+            task_file_attachments = _build_bitrix_task_file_attachments(
+                works_files_repo.get_by_work_ids(session, [w.id for w in group_works])
+            )
             items = build_invoice_items(session, group_works, cp.id)
             if not items:
                 logger.warning(
@@ -259,6 +286,7 @@ def _prepare_pending_invoices(counterparty_name: str, run_at: datetime) -> list[
                     "comment": comment,
                     "custom_payment_purpose": custom_payment_purpose,
                     "period_text": period_text,
+                    "bitrix_task_files": task_file_attachments,
                     "sheet_row_hashes": [w.sheet_row_hash for w in group_works if w.sheet_row_hash],
                     "split_group_key": group.key,
                     "split_group_label": group.label,
@@ -462,6 +490,7 @@ def main() -> None:
                         invoice_link=str(invoice_link) if invoice_link else None,
                         pdf_url=str(pdf_url) if pdf_url else None,
                         invoice_items=prepared["items"],
+                        task_file_attachments=prepared.get("bitrix_task_files"),
                         period_text=prepared.get("period_text"),
                     )
                     if bitrix_result:

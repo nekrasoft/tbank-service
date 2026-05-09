@@ -210,6 +210,7 @@ BITRIX24_WEBHOOK_URL=https://<portal>.bitrix24.ru/rest/<user_id>/<code>
 
 ```env
 BITRIX24_TASK_WEBHOOK_URL=https://<portal>.bitrix24.ru/rest/<user_id>/<code>
+BITRIX24_TASK_FILES_FOLDER_ID=<disk_folder_id>
 BITRIX24_DEAL_WEBHOOK_URL=https://<portal>.bitrix24.ru/rest/<user_id>/<code>
 ```
 
@@ -238,6 +239,9 @@ BITRIX24_DEAL_WEBHOOK_URL=https://<portal>.bitrix24.ru/rest/<user_id>/<code>
   - Теги: `киров`, `новый_счет`, `отправить в ЭДО`
   - Дедлайн: `+1 сутки` от момента создания
 - Описание задачи в BBCode (жирный заголовок/блок), также добавляются `pdfUrl` и сумма счёта.
+- Если у работ из счёта есть привязанные файлы путевых листов, они загружаются в папку
+  `BITRIX24_TASK_FILES_FOLDER_ID` на Bitrix24 Disk и прикрепляются к задаче через `UF_TASK_WEBDAV_FILES`.
+  Webhook задач должен иметь доступ к задачам и диску.
 - При наличии `counterparties.bitrix_company_id` задача связывается с CRM-компанией через `UF_CRM_TASK` в формате `CO_<ID>`.
 - После успешного создания сделки задача дополнительно связывается со сделкой через `UF_CRM_TASK` в формате `D_<DEAL_ID>`.
 - Задача создаётся до отправки уведомления в MAX; если создана успешно, в сообщение MAX добавляется ссылка на задачу.

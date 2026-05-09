@@ -74,6 +74,29 @@ def _calculate_items_total(items: list[dict[str, Any]]) -> Decimal:
     return total.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
+def _build_bitrix_task_file_attachments(work_files: list[Any]) -> list[dict[str, Any]]:
+    """Готовит файлы работ к загрузке в задачу Bitrix24."""
+    attachments: list[dict[str, Any]] = []
+    for work_file in work_files:
+        file_data = getattr(work_file, "file_data", None)
+        if isinstance(file_data, memoryview):
+            file_data = file_data.tobytes()
+        elif isinstance(file_data, bytearray):
+            file_data = bytes(file_data)
+
+        attachments.append(
+            {
+                "work_file_id": getattr(work_file, "id", None),
+                "work_id": getattr(work_file, "work_id", None),
+                "file_token": getattr(work_file, "file_token", None),
+                "file_name": getattr(work_file, "file_name", None),
+                "content_type": getattr(work_file, "content_type", None),
+                "file_data": file_data if isinstance(file_data, bytes) else b"",
+            }
+        )
+    return attachments
+
+
 def _format_date_range(date_from: date | None, date_to: date | None) -> str:
     """Человеко-читаемое представление диапазона дат."""
     if date_from and date_to:
@@ -115,6 +138,9 @@ def _log_dry_run_preview(prepared: dict[str, Any], *, dry_run_bitrix: bool = Fal
             _format_money(line_total),
         )
     logger.info("DRY-RUN: итоговая сумма счёта=%s", _format_money(_calculate_items_total(items)))
+    bitrix_files_count = len(prepared.get("bitrix_task_files") or [])
+    if bitrix_files_count:
+        logger.info("DRY-RUN: файлов работ для задачи Bitrix24=%s", bitrix_files_count)
     if prepared.get("comment"):
         logger.info("DRY-RUN: комментарий к счёту:\n%s", prepared["comment"])
     if dry_run_bitrix:
@@ -195,6 +221,7 @@ def _prepare_pending_invoices(
     from src.db.repos import invoices as inv_repo
     from src.db.repos import invoice_number as num_repo
     from src.db.repos import works as works_repo
+    from src.db.repos import works_files as works_files_repo
     from src.invoice.builder import (
         build_invoice_comment,
         build_custom_payment_purpose,
@@ -327,6 +354,9 @@ def _prepare_pending_invoices(
                     counterparty_id=cp.id,
                     numbers=collect_bunker_numbers(group.works),
                 )
+                task_file_attachments = _build_bitrix_task_file_attachments(
+                    works_files_repo.get_by_work_ids(session, [w.id for w in group.works])
+                )
                 prepared_preview.append(
                     {
                         "counterparty_name": cp.name,
@@ -347,6 +377,7 @@ def _prepare_pending_invoices(
                             contract=cp.contract,
                         ),
                         "period_text": period_text,
+                        "bitrix_task_files": task_file_attachments,
                         "works_count": len(group.works),
                         "date_from": date_from,
                         "date_to": date_to,
@@ -361,6 +392,9 @@ def _prepare_pending_invoices(
         due_date = add_business_days(today, 5)
         prepared_invoices: list[dict[str, Any]] = []
         for group in work_groups:
+            task_file_attachments = _build_bitrix_task_file_attachments(
+                works_files_repo.get_by_work_ids(session, [w.id for w in group.works])
+            )
             items = build_invoice_items(session, group.works, cp.id)
             if not items:
                 logger.error(
@@ -435,6 +469,7 @@ def _prepare_pending_invoices(
                     "comment": comment,
                     "custom_payment_purpose": custom_payment_purpose,
                     "period_text": period_text,
+                    "bitrix_task_files": task_file_attachments,
                     "sheet_row_hashes": [w.sheet_row_hash for w in group.works if w.sheet_row_hash],
                     "split_group_key": group.key,
                     "split_group_label": group.label,
@@ -626,6 +661,7 @@ def main() -> None:
                     invoice_date=prepared["invoice_date"],
                     bitrix_company_id=prepared["bitrix_company_id"],
                     invoice_items=prepared["items"],
+                    task_file_attachments=prepared.get("bitrix_task_files"),
                     period_text=prepared.get("period_text"),
                     log_deal_request_payload=True,
                 )
@@ -725,6 +761,7 @@ def main() -> None:
                     invoice_link=str(invoice_link) if invoice_link else None,
                     pdf_url=str(pdf_url) if pdf_url else None,
                     invoice_items=prepared["items"],
+                    task_file_attachments=prepared.get("bitrix_task_files"),
                     period_text=prepared.get("period_text"),
                 )
                 if bitrix_result:

@@ -1,6 +1,7 @@
 """Клиент Bitrix24 CRM (входящий вебхук)."""
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import os
@@ -575,6 +576,51 @@ def set_deal_product_rows(
     if isinstance(result, str):
         return result.strip().lower() in ("1", "y", "yes", "true")
     raise RuntimeError(f"Неожиданный ответ Bitrix24 crm.deal.productrows.set: {data}")
+
+
+def upload_drive_file(
+    *,
+    folder_id: int,
+    file_name: str,
+    file_content: bytes,
+    webhook_env_var: str = "BITRIX24_TASK_WEBHOOK_URL",
+    generate_unique_name: bool = True,
+) -> int:
+    """Загружает файл на диск Bitrix24 и возвращает ID disk-объекта."""
+    folder_id_int = int(folder_id)
+    if folder_id_int <= 0:
+        raise ValueError("folder_id должен быть положительным целым числом")
+
+    file_name_norm = str(file_name or "").strip()
+    if not file_name_norm:
+        raise ValueError("file_name не должен быть пустым")
+    if not file_content:
+        raise ValueError("file_content не должен быть пустым")
+
+    payload = {
+        "id": folder_id_int,
+        "data": {
+            "NAME": file_name_norm,
+        },
+        "fileContent": [
+            file_name_norm,
+            base64.b64encode(file_content).decode("ascii"),
+        ],
+        "generateUniqueName": bool(generate_unique_name),
+    }
+    data = _call_method(
+        "disk.folder.uploadfile",
+        payload,
+        webhook_env_var=webhook_env_var,
+    )
+    result = data.get("result")
+    if isinstance(result, dict):
+        file_id = result.get("ID") or result.get("id")
+        if isinstance(file_id, int):
+            return file_id
+        if isinstance(file_id, str) and file_id.isdigit():
+            return int(file_id)
+    raise RuntimeError(f"Неожиданный ответ Bitrix24 disk.folder.uploadfile: {data}")
 
 
 def add_task(
