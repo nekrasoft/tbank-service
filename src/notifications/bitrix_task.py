@@ -286,7 +286,7 @@ def _upload_task_file_attachments(
     uploaded_ids: list[int] = []
     for idx, attachment in enumerate(task_file_attachments, start=1):
         file_content = _normalize_file_content(attachment.get("file_data"))
-        file_name = _build_task_file_name(attachment, index=idx)
+        file_name = _build_task_file_name(attachment, index=idx, file_content=file_content)
         work_file_id = attachment.get("work_file_id")
         if not file_content:
             logger.warning(
@@ -336,18 +336,57 @@ def _normalize_file_content(value: Any) -> bytes:
     return b""
 
 
-def _build_task_file_name(attachment: dict[str, Any], *, index: int) -> str:
+def _guess_file_extension(*, content_type: str | None, file_content: bytes) -> str:
+    """Определяет расширение файла по содержимому и MIME."""
+    if file_content.startswith(b"\xff\xd8\xff"):
+        return ".jpg"
+    if file_content.startswith(b"\x89PNG\r\n\x1a\n"):
+        return ".png"
+    if file_content.startswith(b"%PDF"):
+        return ".pdf"
+    if len(file_content) >= 12 and file_content[:4] == b"RIFF" and file_content[8:12] == b"WEBP":
+        return ".webp"
+
+    content_type_norm = str(content_type or "").split(";", 1)[0].strip()
+    return mimetypes.guess_extension(content_type_norm) or ".bin"
+
+
+def _is_usable_file_name(file_name: str) -> bool:
+    """Проверяет, похоже ли имя из БД на реальное имя файла."""
+    stem, extension = os.path.splitext(file_name.strip())
+    if not stem or not extension:
+        return False
+    if len(stem.strip()) <= 1:
+        return False
+    return True
+
+
+def _fallback_file_stem(attachment: dict[str, Any], *, index: int) -> str:
+    token = str(attachment.get("file_token") or "").strip()
+    work_file_id = str(attachment.get("work_file_id") or "").strip()
+    return f"waybill-{token or work_file_id or index}"
+
+
+def _build_task_file_name(
+    attachment: dict[str, Any],
+    *,
+    index: int,
+    file_content: bytes | None = None,
+) -> str:
     """Готовит безопасное имя файла для загрузки на диск Bitrix24."""
     raw_name = str(attachment.get("file_name") or "").strip()
-    if not raw_name:
-        token = str(attachment.get("file_token") or "").strip()
-        content_type = str(attachment.get("content_type") or "").split(";", 1)[0].strip()
-        extension = mimetypes.guess_extension(content_type) or ".bin"
-        raw_name = f"waybill-{token or index}{extension}"
+    file_bytes = file_content if file_content is not None else _normalize_file_content(
+        attachment.get("file_data")
+    )
+    content_type = str(attachment.get("content_type") or "").split(";", 1)[0].strip()
+    extension = _guess_file_extension(content_type=content_type, file_content=file_bytes)
+
+    if not raw_name or not _is_usable_file_name(raw_name):
+        raw_name = f"{_fallback_file_stem(attachment, index=index)}{extension}"
 
     name = raw_name.replace("\x00", "").replace("/", "_").replace("\\", "_").strip()
     if not name:
-        name = f"waybill-{index}.bin"
+        name = f"{_fallback_file_stem(attachment, index=index)}{extension}"
     if len(name) <= 180:
         return name
 
