@@ -578,6 +578,24 @@ def _extract_invoice_numbers(*texts: str | None) -> set[str]:
     return numbers
 
 
+def _normalize_invoice_number(value: Any) -> str:
+    return str(value or "").strip().lstrip("0") or "0"
+
+
+def _operation_invoice_numbers(operation: Any) -> set[str]:
+    return _extract_invoice_numbers(
+        getattr(operation, "pay_purpose", None),
+        getattr(operation, "description", None),
+    )
+
+
+def _operation_mentions_different_invoice_number(operation: Any, invoice: Any) -> bool:
+    mentioned_numbers = _operation_invoice_numbers(operation)
+    if not mentioned_numbers:
+        return False
+    return _normalize_invoice_number(invoice.invoice_number) not in mentioned_numbers
+
+
 
 def _make_dedupe_key(
     *,
@@ -933,6 +951,7 @@ def _match_operation_to_invoice(
                 "method": method,
                 "amount": amount,
             }
+        return None
 
     # 2) Надежный fallback: уникальный ИНН + сумма в пределах остатка.
     # Для paid-backfill счетов fallback строже: только точная сумма и только
@@ -1124,17 +1143,20 @@ def _recalculate_payment_state(
     paid_sum: dict[int, Decimal] = defaultdict(lambda: Decimal("0.00"))
     paid_at: dict[int, datetime | None] = {}
     payment_ops_by_invoice: dict[int, list[Any]] = defaultdict(list)
-    ignored_ops_by_invoice: dict[int, list[Any]] = defaultdict(list)
+    ignored_ops_by_invoice: dict[int, list[tuple[Any, str]]] = defaultdict(list)
 
     for op in matched:
         inv_id = int(op.matched_invoice_id)
         payment_dt = _payment_datetime(op)
         invoice = invoice_by_id.get(inv_id)
+        if invoice and _operation_mentions_different_invoice_number(op, invoice):
+            ignored_ops_by_invoice[inv_id].append((op, "в назначении указан другой номер счета"))
+            continue
         if invoice and not _is_payment_after_invoice_issue(
             payment_dt=payment_dt,
             invoice_issued_at=invoice.issued_at,
         ):
-            ignored_ops_by_invoice[inv_id].append(op)
+            ignored_ops_by_invoice[inv_id].append((op, "платеж раньше issued_at"))
             continue
 
         payment_ops_by_invoice[inv_id].append(op)
@@ -1165,9 +1187,9 @@ def _recalculate_payment_state(
                 _format_money_ru(_invoice_paid_amount(invoice)),
                 _format_dt_log(invoice.paid_at),
             )
-            for op in ignored_ops_by_invoice.get(invoice.id, []):
+            for op, reason in ignored_ops_by_invoice.get(invoice.id, []):
                 _log_statement_operation_context(
-                    prefix=f"Операция выписки не учтена для счета id={invoice.id} number={invoice.invoice_number}: платеж раньше issued_at",
+                    prefix=f"Операция выписки не учтена для счета id={invoice.id} number={invoice.invoice_number}: {reason}",
                     operation=op,
                 )
             continue
@@ -1217,9 +1239,9 @@ def _recalculate_payment_state(
                 prefix=f"Операция выписки для обновления счета id={invoice.id} number={invoice.invoice_number}",
                 operation=op,
             )
-        for op in ignored_ops_by_invoice.get(invoice.id, []):
+        for op, reason in ignored_ops_by_invoice.get(invoice.id, []):
             _log_statement_operation_context(
-                prefix=f"Операция выписки не учтена для счета id={invoice.id} number={invoice.invoice_number}: платеж раньше issued_at",
+                prefix=f"Операция выписки не учтена для счета id={invoice.id} number={invoice.invoice_number}: {reason}",
                 operation=op,
             )
         updated = inv_repo.update_payment_state(
