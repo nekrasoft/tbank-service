@@ -44,6 +44,22 @@ _BOOL_FALSE_VALUES = {
     "выключено",
     "disabled",
 }
+_VOLUME_Q = Decimal("0.01")
+_CONTAINER_VOLUME_M3 = Decimal("8.00")
+_TRIP_REMOVAL_STRUCTURES = {
+    "юл - вывоз мусора",
+    "фл - вывоз мусора",
+}
+_CONTAINER_STRUCTURES = {
+    "юл - контейнеры",
+}
+_VOLUME_NOTE_RE = re.compile(
+    r"(?P<prefix>^|[\s,;])"
+    r"об[ъь]?[её]м\s*[:=\-]?\s*"
+    r"(?P<value>\d+(?:[,.]\d+)?)\s*"
+    r"(?:м\s*(?:3|³)|м\^?3|куб\.?\s*м\.?)?",
+    re.IGNORECASE,
+)
 
 
 def _parse_date(date_str: str) -> date | None:
@@ -86,6 +102,57 @@ def _parse_revenue(value: str | None) -> Decimal | None:
         return Decimal(cleaned).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     except (InvalidOperation, ValueError):
         return None
+
+
+def _normalize_structure(value: str | None) -> str:
+    return str(value or "").strip().lower().replace("ё", "е")
+
+
+def _parse_positive_decimal(value: str | None, *, default: Decimal) -> Decimal:
+    raw = str(value or "").strip().replace(",", ".")
+    if not raw:
+        return default
+    try:
+        parsed = Decimal(raw)
+    except (InvalidOperation, ValueError):
+        return default
+    if parsed <= 0:
+        return Decimal("0.01")
+    return parsed
+
+
+def _parse_volume_note(note: str | None) -> tuple[str, Decimal | None]:
+    """Извлекает 'Объем: 10м3' из примечания и возвращает очищенное примечание."""
+    raw_note = str(note or "").strip()
+    match = _VOLUME_NOTE_RE.search(raw_note)
+    if match is None:
+        return raw_note, None
+
+    volume = _parse_positive_decimal(match.group("value"), default=Decimal("0.00"))
+    parsed_volume = volume.quantize(_VOLUME_Q, rounding=ROUND_HALF_UP) if volume > 0 else None
+
+    clean_note = _VOLUME_NOTE_RE.sub(" ", raw_note, count=1)
+    clean_note = re.sub(r"\s{2,}", " ", clean_note).strip(" ,;:-")
+    return clean_note, parsed_volume
+
+
+def _prepare_work_note_and_volume(row: dict) -> tuple[str, Decimal | None]:
+    """Готовит примечание и объем для записи в works."""
+    structure = _normalize_structure(row.get("structure"))
+    note = str(row.get("note") or "").strip()
+
+    if structure in _TRIP_REMOVAL_STRUCTURES:
+        return _parse_volume_note(note)
+
+    if structure in _CONTAINER_STRUCTURES:
+        amount = _parse_positive_decimal(
+            row.get("object_count"),
+            default=Decimal("1.00"),
+        )
+        volume = (amount * _CONTAINER_VOLUME_M3).quantize(_VOLUME_Q, rounding=ROUND_HALF_UP)
+        return note, volume
+
+    return note, None
 
 
 def _digits_only(value: str | None) -> str:
@@ -323,11 +390,13 @@ def sync_sheets_to_mysql(
 
         added = 0
         revenue_updated = 0
+        volume_updated = 0
         waybill_linked = 0
         waybill_missing = 0
         waybill_conflicts = 0
         for row in rows:
             parsed_revenue = _parse_revenue(row.get("revenue"))
+            note, parsed_volume = _prepare_work_note_and_volume(row)
             if row.get("revenue") and parsed_revenue is None:
                 logger.warning(
                     "Синхронизация: не удалось распарсить выручку '%s' (hash=%s)",
@@ -342,6 +411,12 @@ def sync_sheets_to_mysql(
                         session,
                         sheet_row_hash=row["sheet_row_hash"],
                         revenue=parsed_revenue,
+                    )
+                if parsed_volume is not None:
+                    volume_updated += works_repo.update_volume_by_hash(
+                        session,
+                        sheet_row_hash=row["sheet_row_hash"],
+                        volume=parsed_volume,
                     )
                 link_status = _link_waybill_file(session, row, existing_work.id)
                 if link_status == "linked":
@@ -363,10 +438,11 @@ def sync_sheets_to_mysql(
                 session,
                 date=parsed_date,
                 counterparty_name=row["counterparty_name"],
-                note=row["note"],
+                note=note,
                 structure=row["structure"],
                 operation=row["operation"],
                 object_count=row["object_count"],
+                volume=parsed_volume,
                 revenue=parsed_revenue,
                 sheet_row_hash=row["sheet_row_hash"],
             )
@@ -381,12 +457,13 @@ def sync_sheets_to_mysql(
 
         session.commit()
         logger.info(
-            "Синхронизация: контрагенты — создано %s, обновлено %s, пропущено %s; работы — добавлено %s, обновлено выручки %s; путевые листы — привязано %s, не найдено %s, конфликты %s (обработано строк: %s)",
+            "Синхронизация: контрагенты — создано %s, обновлено %s, пропущено %s; работы — добавлено %s, обновлено выручки %s, обновлено объема %s; путевые листы — привязано %s, не найдено %s, конфликты %s (обработано строк: %s)",
             cp_created,
             cp_updated,
             cp_skipped,
             added,
             revenue_updated,
+            volume_updated,
             waybill_linked,
             waybill_missing,
             waybill_conflicts,

@@ -141,6 +141,7 @@ def create(
     structure: str,
     operation: str,
     object_count: str,
+    volume: Decimal | None = None,
     revenue: Decimal | None = None,
     sheet_row_hash: str,
 ) -> Work:
@@ -152,6 +153,7 @@ def create(
         structure=structure,
         operation=operation,
         object_count=object_count or "1",
+        volume=volume,
         revenue=revenue,
         sheet_row_hash=sheet_row_hash,
     )
@@ -188,6 +190,21 @@ def update_revenue_by_hash(
         update(Work)
         .where(Work.sheet_row_hash == sheet_row_hash)
         .values(revenue=revenue)
+    )
+    return result.rowcount or 0
+
+
+def update_volume_by_hash(
+    session: Session,
+    *,
+    sheet_row_hash: str,
+    volume: Decimal,
+) -> int:
+    """Обновление объема по hash независимо от статуса счёта."""
+    result = session.execute(
+        update(Work)
+        .where(Work.sheet_row_hash == sheet_row_hash)
+        .values(volume=volume)
     )
     return result.rowcount or 0
 

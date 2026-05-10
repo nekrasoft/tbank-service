@@ -112,6 +112,20 @@ def _comment_unit_and_volume_m3(work: Work) -> tuple[str, float]:
     return "шт", _BUNKER_VOLUME_M3
 
 
+def _work_total_volume_m3(work: Work, amount: float, unit_volume_m3: float) -> float:
+    """Возвращает сохраненный объем работы или расчетный fallback."""
+    volume = getattr(work, "volume", None)
+    if volume is None:
+        return amount * unit_volume_m3
+    try:
+        parsed = float(volume)
+    except (TypeError, ValueError):
+        return amount * unit_volume_m3
+    if parsed <= 0:
+        return amount * unit_volume_m3
+    return parsed
+
+
 def _parse_note_and_bunker_numbers(note: str | None) -> tuple[str, list[str]]:
     """
     Разделяет примечание на локацию и список номеров бункеров.
@@ -238,7 +252,7 @@ def build_invoice_comment(
             if len(address) > 20 and address not in service_address_seen:
                 service_address_seen.add(address)
                 service_addresses.append(address)
-        total_volume += amount * volume_m3
+        total_volume += _work_total_volume_m3(work, amount, volume_m3)
 
     header_lines: list[str] = []
     if contract_line:
