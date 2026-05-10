@@ -148,7 +148,7 @@ def create(
     work = Work(
         date=date,
         counterparty_name=counterparty_name,
-        note=note or "",
+        note=(note or "").strip() or None,
         structure=structure,
         operation=operation,
         object_count=object_count or "1",

@@ -415,6 +415,7 @@ def sync_sheets_to_mysql(
 
             existing_work = works_repo.get_by_hash(session, row["sheet_row_hash"])
             if existing_work is not None:
+                existing_work.note = note.strip() or None
                 if parsed_revenue is not None:
                     existing_work.revenue = parsed_revenue
                     revenue_updated += 1
