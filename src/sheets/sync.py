@@ -397,6 +397,7 @@ def sync_sheets_to_mysql(
         for row in rows:
             parsed_revenue = _parse_revenue(row.get("revenue"))
             note, parsed_volume = _prepare_work_note_and_volume(row)
+            parsed_date = _parse_date(row["date"])
             if row.get("revenue") and parsed_revenue is None:
                 logger.warning(
                     "Синхронизация: не удалось распарсить выручку '%s' (hash=%s)",
@@ -404,20 +405,23 @@ def sync_sheets_to_mysql(
                     row.get("sheet_row_hash"),
                 )
 
+            if parsed_date is None:
+                logger.warning(
+                    "Синхронизация: пропуск строки с невалидной датой '%s' (hash=%s)",
+                    row.get("date"),
+                    row.get("sheet_row_hash"),
+                )
+                continue
+
             existing_work = works_repo.get_by_hash(session, row["sheet_row_hash"])
             if existing_work is not None:
                 if parsed_revenue is not None:
-                    revenue_updated += works_repo.update_revenue_by_hash(
-                        session,
-                        sheet_row_hash=row["sheet_row_hash"],
-                        revenue=parsed_revenue,
-                    )
+                    existing_work.revenue = parsed_revenue
+                    revenue_updated += 1
                 if parsed_volume is not None:
-                    volume_updated += works_repo.update_volume_by_hash(
-                        session,
-                        sheet_row_hash=row["sheet_row_hash"],
-                        volume=parsed_volume,
-                    )
+                    existing_work.volume = parsed_volume
+                    volume_updated += 1
+                session.flush()
                 link_status = _link_waybill_file(session, row, existing_work.id)
                 if link_status == "linked":
                     waybill_linked += 1
@@ -426,14 +430,7 @@ def sync_sheets_to_mysql(
                 elif link_status == "conflict":
                     waybill_conflicts += 1
                 continue
-            parsed_date = _parse_date(row["date"])
-            if parsed_date is None:
-                logger.warning(
-                    "Синхронизация: пропуск строки с невалидной датой '%s' (hash=%s)",
-                    row.get("date"),
-                    row.get("sheet_row_hash"),
-                )
-                continue
+
             work = works_repo.create(
                 session,
                 date=parsed_date,

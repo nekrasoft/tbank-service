@@ -21,6 +21,7 @@ SCHEMA_PATH = PROJECT_ROOT / "config" / "schema.json"
 CREDENTIALS_PATH = PROJECT_ROOT / "credentials" / "google_service_account.json"
 
 logger = logging.getLogger(__name__)
+_ZERO_WIDTH_CHARS = "\u200b\u200c\u200d\ufeff"
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
@@ -61,6 +62,22 @@ def _parse_date_safe(date_str: str) -> datetime | None:
         return None
 
 
+def _clean_cell(value) -> str:
+    """Нормализация текста ячейки для стабильного хеша и парсинга."""
+    raw = str(value or "").replace("\u00a0", " ")
+    for char in _ZERO_WIDTH_CHARS:
+        raw = raw.replace(char, "")
+    return raw.strip()
+
+
+def _first_non_empty(row: dict, headers: list[str]) -> str:
+    for header in headers:
+        value = _clean_cell(row.get(header, ""))
+        if value:
+            return value
+    return ""
+
+
 def get_sheets_client() -> gspread.Client:
     """Создание клиента gspread."""
     creds_path = os.environ.get("GOOGLE_CREDENTIALS_PATH", str(CREDENTIALS_PATH))
@@ -98,7 +115,16 @@ def read_works(
         worksheet = spreadsheet.sheet1
 
     # Только нужные колонки — обходит дубликаты/пустые заголовки в строке заголовков.
-    required_headers = ["Дата", "Контрагент", "Примечание", "Структура", "Операция", "Объект", "Выручка"]
+    revenue_headers = ["Выручка", "Приход"]
+    required_headers = [
+        "Дата",
+        "Контрагент",
+        "Примечание",
+        "Структура",
+        "Операция",
+        "Объект",
+        *revenue_headers,
+    ]
     try:
         records = worksheet.get_all_records(expected_headers=required_headers)
     except Exception:
@@ -126,19 +152,19 @@ def read_works(
         date_val = row.get("Дата", "")
         if not date_val or not str(date_val).strip():
             continue
-        date_str = str(date_val).strip()
+        date_str = _clean_cell(date_val)
         parsed = _parse_date_safe(date_str)
         if last_date and parsed is not None and parsed.date() < last_date:
             continue
-        counterparty = str(row.get("Контрагент", "") or "").strip()
-        raw_note = str(row.get("Примечание", "") or "").strip()
+        counterparty = _clean_cell(row.get("Контрагент", ""))
+        raw_note = _clean_cell(row.get("Примечание", ""))
         note, waybill_file_token = extract_waybill_token(raw_note)
-        structure = str(row.get("Структура", "") or "").strip()
-        operation = str(row.get("Операция", "") or "").strip()
+        structure = _clean_cell(row.get("Структура", ""))
+        operation = _clean_cell(row.get("Операция", ""))
         if operation != "Поступление по основной деятельности":
             continue
-        object_count = str(row.get("Объект", "") or "1").strip() or "1"
-        revenue = str(row.get("Выручка", "") or "").strip()
+        object_count = _clean_cell(row.get("Объект", "") or "1") or "1"
+        revenue = _first_non_empty(row, revenue_headers)
 
         sheet_row_hash = hashlib.sha256(
             f"{date_str}|{counterparty}|{raw_note}|{structure}|{operation}|{object_count}".encode("utf-8")

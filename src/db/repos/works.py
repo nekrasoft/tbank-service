@@ -6,7 +6,6 @@ from decimal import Decimal
 
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
-from sqlalchemy.sql import func
 
 from src.db.models import Work
 
