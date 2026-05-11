@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest tests/ -v --tb=short)",
+      "PowerShell(python -m pytest tests/ -v --tb=short 2>&1)",
+      "Bash(wsl python *)",
+      "Bash(wsl ls *)"
+    ]
+  }
+}
