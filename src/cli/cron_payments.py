@@ -60,7 +60,16 @@ _INVOICE_HINT_RE = re.compile(
 _INVOICE_LIST_HINT_RE = re.compile(
     r"(?:сч[её]т(?:а|у|ом|ов|ам|ами|ах)?|сч\.?|с/ф|сф|invoice|inv)"
     r"\s*(?:[:\-]\s*)?(?:(?:№|#|no|n[оo])\s*)?"
-    r"(\d{1,15}(?:\s*(?:[,;/]|\bи\b|\band\b)\s*\d{1,15})*)\b",
+    r"("
+    r"\d{1,15}(?:\s*от\s*\d{1,2}[.\-/]\d{1,2}[.\-/]\d{2,4})?"
+    r"(?:\s*(?:[,;/]|\bи\b|\band\b)\s*(?:(?:№|#|no|n[оo])\s*)?\d{1,15}"
+    r"(?:\s*от\s*\d{1,2}[.\-/]\d{1,2}[.\-/]\d{2,4})?)*"
+    r")\b",
+    re.IGNORECASE,
+)
+_INVOICE_LIST_NUMBER_RE = re.compile(
+    r"(?:^|[,;/]|\bи\b|\band\b)\s*(?:(?:№|#|no|n[оo])\s*)?"
+    r"(\d{1,15})(?:\s*от\s*\d{1,2}[.\-/]\d{1,2}[.\-/]\d{2,4})?",
     re.IGNORECASE,
 )
 _NON_ALNUM_RE = re.compile(r"[^0-9a-zа-яё]+", re.IGNORECASE)
@@ -574,7 +583,7 @@ def _extract_invoice_numbers(*texts: str | None) -> set[str]:
 
     numbers = {m.group(1).lstrip("0") or "0" for m in _INVOICE_HINT_RE.finditer(joined)}
     for match in _INVOICE_LIST_HINT_RE.finditer(joined):
-        numbers.update(number.lstrip("0") or "0" for number in re.findall(r"\d{1,15}", match.group(1)))
+        numbers.update(number.lstrip("0") or "0" for number in _INVOICE_LIST_NUMBER_RE.findall(match.group(1)))
     return numbers
 
 

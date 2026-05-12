@@ -4,7 +4,11 @@
       "Bash(python -m pytest tests/ -v --tb=short)",
       "PowerShell(python -m pytest tests/ -v --tb=short 2>&1)",
       "Bash(wsl python *)",
-      "Bash(wsl ls *)"
+      "Bash(wsl ls *)",
+      "Bash(Select-String -Pattern \"is not defined|NameError|func\\\\s*=\" -Context 2,2)",
+      "Bash(Select-Object -First 50)",
+      "Bash(python -m pytest tests/test_works.py -v)",
+      "Bash(python -c \"import src.db.repos.works; print\\('Import OK'\\)\")"
     ]
   }
 }
