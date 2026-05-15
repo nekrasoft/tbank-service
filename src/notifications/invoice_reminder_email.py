@@ -151,7 +151,7 @@ def build_invoice_payment_thank_you_text(
         "",
         f"{thanks} счета №{invoice_number} от {invoice_date.strftime('%d.%m.%Y')}.",
         f"Дата оплаты: {payment_date.strftime('%d.%m.%Y')}",
-        f"Сумма оплаты: {_format_money(total_amount)}",
+        # f"Сумма оплаты: {_format_money(total_amount)}",
     ]
 
     lines.extend([
