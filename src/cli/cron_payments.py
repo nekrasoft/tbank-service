@@ -1464,8 +1464,12 @@ def _build_payment_thank_recipients(invoice: Any) -> list[str]:
     return normalize_emails(recipient_sources)
 
 
-def _send_due_payment_thank_you_emails(*, limit: int) -> dict[str, int]:
-    """Отправляет email-благодарности по счетам, оплаченным в текущий бизнес-день."""
+def _send_due_payment_thank_you_emails(
+    *,
+    limit: int,
+    newly_paid_invoice_ids: list[int] | None = None,
+) -> dict[str, int]:
+    """Отправляет email-благодарности по due-счетам и новым оплатам текущего запуска."""
     from src.db.connection import get_session
     from src.db.repos import invoices as inv_repo
     from src.notifications.invoice_reminder_email import send_invoice_payment_thank_you
@@ -1487,6 +1491,19 @@ def _send_due_payment_thank_you_emails(*, limit: int) -> dict[str, int]:
             paid_to=paid_to,
             limit=limit,
         )
+        seen_invoice_ids = {int(invoice.id) for invoice in invoices}
+        extra_invoice_ids = [
+            int(invoice_id)
+            for invoice_id in newly_paid_invoice_ids or []
+            if int(invoice_id) not in seen_invoice_ids
+        ]
+        if extra_invoice_ids:
+            invoices.extend(
+                inv_repo.get_paid_pending_payment_thank_email_by_ids(
+                    session,
+                    invoice_ids=extra_invoice_ids,
+                )
+            )
         stats["candidates"] = len(invoices)
         if not invoices:
             return stats
@@ -2486,12 +2503,15 @@ def main() -> None:
         cashless_income_stats["failed"] = 1
         logger.exception("Ошибка синхронизации доходов в Sheets")
 
-    matched_count, recalc_stats, _ = _run_matching(
+    matched_count, recalc_stats, newly_paid = _run_matching(
         unmatched_limit,
         include_paid_backfill=args.statement_date is not None,
         statement_from_utc=_statement_from_utc(args.statement_date),
     )
-    payment_thank_stats = _send_due_payment_thank_you_emails(limit=payment_thank_email_limit)
+    payment_thank_stats = _send_due_payment_thank_you_emails(
+        limit=payment_thank_email_limit,
+        newly_paid_invoice_ids=[int(item["invoice_id"]) for item in newly_paid],
+    )
 
     logger.info(
         (
