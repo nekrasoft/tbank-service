@@ -721,6 +721,15 @@ _STATEMENT_QUERY_DATE_FIELDS = (
     "doc_date",
 )
 
+_PAYMENT_MATCH_DATE_FIELDS = (
+    "operation_date",
+    "trxn_post_date",
+    "authorization_date",
+    "doc_date",
+    "charge_date",
+    "draw_date",
+)
+
 
 def _operation_query_datetime_with_field(operation_data: dict[str, Any]) -> tuple[str | None, datetime | None]:
     for field_name in _STATEMENT_QUERY_DATE_FIELDS:
@@ -804,7 +813,7 @@ def _build_invoice_state(open_invoices: list[Any], matched_incoming: list[Any]) 
     for op in matched_incoming:
         invoice_id = int(op.matched_invoice_id)
         invoice = invoice_by_id.get(invoice_id)
-        payment_dt = _payment_datetime(op)
+        payment_dt = _payment_match_datetime(op)
         if invoice and not _is_payment_after_invoice_issue(
             payment_dt=payment_dt,
             invoice_issued_at=invoice.issued_at,
@@ -903,7 +912,7 @@ def _match_operation_to_invoice(
     if amount <= 0:
         return None
 
-    payment_dt = _payment_datetime(operation)
+    payment_dt = _payment_match_datetime(operation)
     payer_inn = (operation.payer_inn or operation.counterparty_inn or "").strip()
     if not payer_inn:
         return None
@@ -1092,6 +1101,7 @@ def _build_multi_invoice_payment_allocations(
             continue
 
         payment_dt = _payment_datetime(operation)
+        match_dt = _payment_match_datetime(operation)
         candidate_entries: dict[int, dict[str, Any]] = {}
         for number in mentioned_numbers:
             for invoice_id in invoices_by_number.get(number, []):
@@ -1105,7 +1115,7 @@ def _build_multi_invoice_payment_allocations(
                 if not invoice_inn or invoice_inn != payer_inn:
                     continue
                 if not _is_payment_after_invoice_issue(
-                    payment_dt=payment_dt,
+                    payment_dt=match_dt,
                     invoice_issued_at=invoice.issued_at,
                 ):
                     continue
@@ -1160,6 +1170,14 @@ def _build_multi_invoice_payment_allocations(
 
 def _payment_datetime(op_row: Any) -> datetime | None:
     return _operation_effective_datetime(op_row)
+
+
+def _payment_match_datetime(op_row: Any) -> datetime | None:
+    for field_name in _PAYMENT_MATCH_DATE_FIELDS:
+        value = getattr(op_row, field_name, None)
+        if value is not None:
+            return value
+    return None
 
 
 def _operation_on_or_after(operation: Any, from_utc: datetime | None) -> bool:
@@ -1269,12 +1287,13 @@ def _recalculate_payment_state(
     for op in matched:
         inv_id = int(op.matched_invoice_id)
         payment_dt = _payment_datetime(op)
+        match_dt = _payment_match_datetime(op)
         invoice = invoice_by_id.get(inv_id)
         if invoice and _operation_mentions_different_invoice_number(op, invoice):
             ignored_ops_by_invoice[inv_id].append((op, "в назначении указан другой номер счета"))
             continue
         if invoice and not _is_payment_after_invoice_issue(
-            payment_dt=payment_dt,
+            payment_dt=match_dt,
             invoice_issued_at=invoice.issued_at,
         ):
             ignored_ops_by_invoice[inv_id].append((op, "платеж раньше issued_at"))
@@ -1300,8 +1319,9 @@ def _recalculate_payment_state(
             payment_dt = allocation.get("payment_dt")
             if not isinstance(payment_dt, datetime):
                 payment_dt = _payment_datetime(op)
+            match_dt = _payment_match_datetime(op)
             if not _is_payment_after_invoice_issue(
-                payment_dt=payment_dt,
+                payment_dt=match_dt,
                 invoice_issued_at=invoice.issued_at,
             ):
                 ignored_ops_by_invoice[int(inv_id)].append((op, "платеж раньше issued_at"))

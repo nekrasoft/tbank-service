@@ -91,6 +91,58 @@ def test_payment_thanks_include_newly_paid_invoice_outside_business_day(monkeypa
     assert stats == {"candidates": 2, "sent": 2, "failed": 0, "skipped": 0}
 
 
+def test_invoice_matching_uses_operation_date_before_doc_date() -> None:
+    counterparty = SimpleNamespace(
+        inn="9723164328",
+        name='ООО "ПЛАЙВУД МАРКЕТ"',
+        short_name="Плайвуд Маркет",
+    )
+    invoice = SimpleNamespace(
+        id=134,
+        invoice_number="228",
+        issued_at=datetime(2026, 5, 15, 13, 1, 2),
+        counterparty=counterparty,
+    )
+    operation = SimpleNamespace(
+        operation_amount=Decimal("10600.00"),
+        account_amount=None,
+        ruble_amount=None,
+        operation_date=datetime(2026, 5, 15, 13, 34, 19),
+        trxn_post_date=datetime(2026, 5, 15, 13, 34, 29),
+        authorization_date=None,
+        doc_date=datetime(2026, 5, 14, 21, 0, 0),
+        charge_date=None,
+        draw_date=None,
+        payer_inn="9723164328",
+        counterparty_inn="9723164328",
+        payer_name='ООО "ПЛАЙВУД МАРКЕТ"',
+        counterparty_name='ООО "ПЛАЙВУД МАРКЕТ"',
+        pay_purpose=(
+            "Оплата по счету № 228 от 15.05.2026 за Услуги спецтехники "
+            "(ломовоз) - вывоз и утилизация мусора. Сумма 10600-00 Без налога (НДС)"
+        ),
+        description=None,
+    )
+
+    decision = cron_payments._match_operation_to_invoice(
+        operation,
+        invoice_state={
+            134: {
+                "invoice": invoice,
+                "total": Decimal("10600.00"),
+                "paid": Decimal("0.00"),
+            },
+        },
+        invoices_by_number={"228": [134]},
+        invoices_by_inn={"9723164328": [134]},
+        open_invoice_ids=[134],
+    )
+
+    assert decision is not None
+    assert decision["invoice_id"] == 134
+    assert decision["method"] == "invoice_number"
+
+
 def test_extract_invoice_numbers_multiple_with_dates_and_leading_zeros() -> None:
     text = "Оплата по счету № 00199 от 30.04.2026, № 00209 от 02.05.2026"
 
