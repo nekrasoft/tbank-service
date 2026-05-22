@@ -178,6 +178,7 @@ class Invoice(Base):
     counterparty = relationship("Counterparty", backref="invoices")
     items = relationship("InvoiceItem", backref="invoice", cascade="all, delete-orphan")
     __table_args__ = (
+        Index("ix_invoices_invoice_number", "invoice_number"),
         Index("ix_invoices_payment_thank_email", "status", "paid_at", "payment_thank_email_sent_at"),
     )
 

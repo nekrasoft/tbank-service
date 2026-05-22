@@ -262,6 +262,24 @@ def get_paid_pending_payment_thank_email_by_ids(
     return list(result.scalars().all())
 
 
+def get_by_invoice_numbers_for_payment_thank_email(
+    session: Session,
+    *,
+    invoice_numbers: list[str],
+) -> list[Invoice]:
+    """Счета из ручного списка для отправки email-благодарностей."""
+    if not invoice_numbers:
+        return []
+    stmt = (
+        select(Invoice)
+        .where(Invoice.invoice_number.in_(invoice_numbers))
+        .options(joinedload(Invoice.counterparty), selectinload(Invoice.items))
+        .order_by(Invoice.id.asc())
+    )
+    result = session.execute(stmt)
+    return list(result.scalars().all())
+
+
 def update_payment_state(
     session: Session,
     *,

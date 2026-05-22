@@ -91,6 +91,64 @@ def test_payment_thanks_include_newly_paid_invoice_outside_business_day(monkeypa
     assert stats == {"candidates": 2, "sent": 2, "failed": 0, "skipped": 0}
 
 
+def test_manual_payment_thanks_dry_run_does_not_send_or_mark(monkeypatch) -> None:
+    session = MagicMock()
+    send_mock = MagicMock()
+    mark_mock = MagicMock()
+
+    invoice = SimpleNamespace(
+        id=131,
+        invoice_number="225",
+        status="paid",
+        payment_thank_email_sent_at=None,
+        recipient_emails_snapshot="client@example.com",
+        counterparty=SimpleNamespace(
+            name="Контрагент 225",
+            email="",
+            email_accountant="accountant@example.com",
+        ),
+        counterparty_id=131,
+        issued_at=datetime(2026, 5, 11),
+        paid_at=datetime(2026, 5, 21, 10),
+        due_date=None,
+        items=[SimpleNamespace(price=Decimal("100.00"), amount=Decimal("1"))],
+    )
+    requested_numbers: list[str] = []
+    connection_module = ModuleType("src.db.connection")
+    invoices_repo_module = ModuleType("src.db.repos.invoices")
+
+    connection_module.get_session = lambda: session
+
+    def fake_get_by_numbers(*_args, invoice_numbers: list[str], **_kwargs):
+        requested_numbers.extend(invoice_numbers)
+        return [invoice]
+
+    invoices_repo_module.get_by_invoice_numbers_for_payment_thank_email = fake_get_by_numbers
+    invoices_repo_module.mark_payment_thank_email_sent = mark_mock
+    monkeypatch.setitem(sys.modules, "src.db.connection", connection_module)
+    monkeypatch.setitem(sys.modules, "src.db.repos.invoices", invoices_repo_module)
+    monkeypatch.setattr(invoice_reminder_email, "send_invoice_payment_thank_you", send_mock)
+
+    stats = cron_payments._send_manual_payment_thank_you_emails(
+        invoice_numbers=["00225"],
+        dry_run=True,
+    )
+
+    assert requested_numbers == ["225"]
+    send_mock.assert_not_called()
+    mark_mock.assert_not_called()
+    session.rollback.assert_called_once()
+    assert stats == {
+        "requested": 1,
+        "found": 1,
+        "candidates": 1,
+        "sent": 0,
+        "failed": 0,
+        "skipped": 0,
+        "missing": 0,
+    }
+
+
 def test_invoice_matching_uses_operation_date_before_doc_date() -> None:
     counterparty = SimpleNamespace(
         inn="9723164328",

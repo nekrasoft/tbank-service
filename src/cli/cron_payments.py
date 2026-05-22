@@ -3,6 +3,7 @@ CLI: отдельный крон синка выписки T-Bank и автоз�
 Запуск: python3 -m src.cli.cron_payments
 Или:   python3 -m src.cli.cron_payments --dry-run
 Или:   python3 -m src.cli.cron_payments --dry-run --dry-run-bitrix
+Или:   python3 -m src.cli.cron_payments --dry-run --send-payment-thanks-for-invoices 123 124
 """
 from __future__ import annotations
 
@@ -124,6 +125,16 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--send-payment-thanks-for-invoices",
+        nargs="+",
+        metavar="INVOICE_NUMBER",
+        help=(
+            "Ручная отправка thank-you email по указанным номерам счетов. "
+            "Номера можно передать через пробел, запятую или точку с запятой. "
+            "Вместе с --dry-run только показывает получателей без отправки."
+        ),
+    )
+    parser.add_argument(
         "--force-cashless-expenses",
         action="store_true",
         help=(
@@ -178,7 +189,41 @@ def _parse_args() -> argparse.Namespace:
     args = parser.parse_args()
     if args.dry_run_bitrix and not args.dry_run:
         parser.error("--dry-run-bitrix можно использовать только вместе с --dry-run")
+    try:
+        args.send_payment_thanks_for_invoices = _parse_invoice_number_values(
+            args.send_payment_thanks_for_invoices
+        )
+    except argparse.ArgumentTypeError as e:
+        parser.error(str(e))
+    if args.send_payment_thanks_for_invoices and args.dry_run_bitrix:
+        parser.error("--dry-run-bitrix нельзя использовать с ручной отправкой thank-you email")
     return args
+
+
+def _parse_invoice_number_values(values: list[str] | None) -> list[str]:
+    if not values:
+        return []
+
+    invoice_numbers: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        for raw_part in re.split(r"[,;\s]+", str(value or "")):
+            part = raw_part.strip().lstrip("№#")
+            if not part:
+                continue
+            if not re.fullmatch(r"\d{1,20}", part):
+                raise argparse.ArgumentTypeError(
+                    f"некорректный номер счета для thank-you email: {raw_part}"
+                )
+            normalized = _normalize_invoice_number(part)
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            invoice_numbers.append(normalized)
+
+    if not invoice_numbers:
+        raise argparse.ArgumentTypeError("передайте хотя бы один номер счета")
+    return invoice_numbers
 
 
 
@@ -1604,6 +1649,153 @@ def _send_due_payment_thank_you_emails(
         session.close()
 
 
+def _send_manual_payment_thank_you_emails(
+    *,
+    invoice_numbers: list[str],
+    dry_run: bool,
+) -> dict[str, int]:
+    """Ручная отправка email-благодарностей по явному списку номеров счетов."""
+    from src.db.connection import get_session
+    from src.db.repos import invoices as inv_repo
+    from src.notifications.invoice_reminder_email import send_invoice_payment_thank_you
+
+    business_day = _business_today()
+    requested_numbers = [_normalize_invoice_number(number) for number in invoice_numbers]
+    stats = {
+        "requested": len(requested_numbers),
+        "found": 0,
+        "candidates": 0,
+        "sent": 0,
+        "failed": 0,
+        "skipped": 0,
+        "missing": 0,
+    }
+
+    session = get_session()
+    try:
+        invoices = inv_repo.get_by_invoice_numbers_for_payment_thank_email(
+            session,
+            invoice_numbers=requested_numbers,
+        )
+        stats["found"] = len(invoices)
+        found_numbers = {_normalize_invoice_number(invoice.invoice_number) for invoice in invoices}
+        missing_numbers = [number for number in requested_numbers if number not in found_numbers]
+        stats["missing"] = len(missing_numbers)
+        for invoice_number in missing_numbers:
+            logger.warning("Manual payment thank-you email skipped invoice=%s: счет не найден", invoice_number)
+
+        if DEBUG_FORCE_EMAIL:
+            logger.warning("Используется DEBUG_FORCE_EMAIL override для thank-you email: %s", DEBUG_FORCE_EMAIL)
+
+        for invoice in invoices:
+            invoice_number = (invoice.invoice_number or "").strip() or str(invoice.id)
+            recipients = _build_payment_thank_recipients(invoice)
+            recipient_snapshot = ", ".join(recipients) or None
+
+            if str(invoice.status or "").strip() != "paid":
+                stats["skipped"] += 1
+                logger.warning(
+                    "Manual payment thank-you email skipped invoice=%s: status=%s",
+                    invoice_number,
+                    invoice.status,
+                )
+                continue
+
+            if invoice.payment_thank_email_sent_at is not None:
+                stats["skipped"] += 1
+                logger.info(
+                    "Manual payment thank-you email skipped invoice=%s: уже отправлено %s",
+                    invoice_number,
+                    _format_dt_log(invoice.payment_thank_email_sent_at),
+                )
+                continue
+
+            if not recipients:
+                stats["skipped"] += 1
+                logger.warning(
+                    "Manual payment thank-you email skipped invoice=%s: не задан email получателя",
+                    invoice_number,
+                )
+                continue
+
+            stats["candidates"] += 1
+            counterparty_name = (
+                (invoice.counterparty.name if invoice.counterparty else "")
+                or f"контрагент #{invoice.counterparty_id}"
+            )
+            invoice_date = _business_date_from_utc_naive(invoice.issued_at) or invoice.issued_at.date()
+            payment_date = _business_date_from_utc_naive(invoice.paid_at) or business_day
+            was_overdue = invoice.due_date is not None and payment_date > invoice.due_date
+            total_amount = _invoice_total(invoice)
+
+            if dry_run:
+                logger.info(
+                    (
+                        "DRY-RUN: manual payment thank-you email candidate invoice=%s "
+                        "recipients=%s payment_date=%s overdue=%s total=%s"
+                    ),
+                    invoice_number,
+                    recipient_snapshot,
+                    payment_date.isoformat(),
+                    was_overdue,
+                    _format_money_ru(total_amount),
+                )
+                continue
+
+            try:
+                send_invoice_payment_thank_you(
+                    recipients=recipients,
+                    invoice_number=invoice_number,
+                    counterparty_name=counterparty_name,
+                    invoice_date=invoice_date,
+                    payment_date=payment_date,
+                    due_date=invoice.due_date,
+                    total_amount=total_amount,
+                    was_overdue=was_overdue,
+                )
+                sent_at = datetime.utcnow().replace(microsecond=0)
+                marked = inv_repo.mark_payment_thank_email_sent(
+                    session,
+                    invoice_id=int(invoice.id),
+                    sent_at=sent_at,
+                )
+                if not marked:
+                    session.rollback()
+                    stats["skipped"] += 1
+                    logger.info(
+                        "Manual payment thank-you email already marked invoice=%s recipients=%s",
+                        invoice_number,
+                        recipient_snapshot,
+                    )
+                    continue
+
+                session.commit()
+                stats["sent"] += 1
+                logger.info(
+                    "Manual payment thank-you email sent invoice=%s recipients=%s overdue=%s",
+                    invoice_number,
+                    recipient_snapshot,
+                    was_overdue,
+                )
+            except Exception:
+                session.rollback()
+                stats["failed"] += 1
+                logger.exception(
+                    "Ошибка ручной отправки thank-you email invoice=%s recipients=%s",
+                    invoice_number,
+                    recipient_snapshot,
+                )
+
+        if dry_run:
+            session.rollback()
+        return stats
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
 def _log_dry_run_paid_preview(newly_paid: list[dict[str, Any]]) -> None:
     if not newly_paid:
         logger.info("DRY-RUN: нет счетов, которые перешли бы в paid")
@@ -2273,6 +2465,27 @@ def _statement_from_utc(statement_date: date | None) -> datetime | None:
 def main() -> None:
     """Точка входа платежного cron: синк выписки + матчинг оплат к invoices."""
     args = _parse_args()
+    if args.send_payment_thanks_for_invoices:
+        stats = _send_manual_payment_thank_you_emails(
+            invoice_numbers=args.send_payment_thanks_for_invoices,
+            dry_run=args.dry_run,
+        )
+        logger.info(
+            (
+                "manual payment_thanks завершен: requested=%s found=%s missing=%s "
+                "candidates=%s sent=%s failed=%s skipped=%s dry_run=%s"
+            ),
+            stats.get("requested", 0),
+            stats.get("found", 0),
+            stats.get("missing", 0),
+            stats.get("candidates", 0),
+            stats.get("sent", 0),
+            stats.get("failed", 0),
+            stats.get("skipped", 0),
+            args.dry_run,
+        )
+        return
+
     account_numbers = _get_account_numbers()
     initial_lookback_days = _env_int(
         "TBANK_STATEMENT_INITIAL_LOOKBACK_DAYS",
