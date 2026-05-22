@@ -134,19 +134,17 @@ def _build_reminder_recipients(invoice: Any) -> list[str]:
     return normalize_emails(recipient_sources)
 
 
+def _is_business_day(day: date) -> bool:
+    return day.weekday() < 5
+
+
 def _run_reminders(
     *,
     offsets: list[int],
     limit: int,
     dry_run: bool,
 ) -> dict[str, int]:
-    from src.db.connection import get_session
-    from src.db.repos import invoice_reminders as reminders_repo
-    from src.db.repos import invoices as invoices_repo
-    from src.notifications.invoice_reminder_email import send_invoice_payment_reminder
-
     today = date.today()
-    now_utc = datetime.utcnow().replace(microsecond=0)
     stats = {
         "invoices": 0,
         "due_offsets": 0,
@@ -156,6 +154,17 @@ def _run_reminders(
         "would_send": 0,
         "would_skip": 0,
     }
+
+    if not _is_business_day(today):
+        logger.info("cron_invoice_reminders пропущен: %s не рабочий день", today.isoformat())
+        return stats
+
+    from src.db.connection import get_session
+    from src.db.repos import invoice_reminders as reminders_repo
+    from src.db.repos import invoices as invoices_repo
+    from src.notifications.invoice_reminder_email import send_invoice_payment_reminder
+
+    now_utc = datetime.utcnow().replace(microsecond=0)
 
     session = get_session()
     try:
