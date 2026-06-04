@@ -6,10 +6,10 @@ from decimal import Decimal
 import json
 from typing import Any
 
-from sqlalchemy import or_, select, update
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.orm import Session
 
-from src.db.models import TBankStatementOperation, TBankStatementSyncState
+from src.db.models import DailyExpenseAllocation, TBankStatementOperation, TBankStatementSyncState
 
 
 def _serialize_raw_payload(payload: dict[str, Any]) -> str:
@@ -235,6 +235,104 @@ def mark_cashless_expenses_sheet_synced(
         )
     )
     return int(result.rowcount or 0)
+
+
+def get_cashless_expenses_for_classification(
+    session: Session,
+    *,
+    limit: int | None = None,
+    operation_date_from: datetime | None = None,
+    include_classified: bool = False,
+) -> list[TBankStatementOperation]:
+    """Исходящие Transaction-операции для управленческой классификации расходов."""
+    stmt = (
+        select(TBankStatementOperation)
+        .where(TBankStatementOperation.is_incoming.is_(False))
+        .where(TBankStatementOperation.operation_date.is_not(None))
+        .where(TBankStatementOperation.operation_amount > Decimal("0.00"))
+        .where(
+            or_(
+                TBankStatementOperation.operation_status.is_(None),
+                TBankStatementOperation.operation_status == "Transaction",
+            )
+        )
+        .order_by(TBankStatementOperation.operation_date.asc(), TBankStatementOperation.id.asc())
+    )
+    if not include_classified:
+        stmt = stmt.where(TBankStatementOperation.cashless_expense_classification_source.is_(None))
+    if operation_date_from is not None:
+        stmt = stmt.where(TBankStatementOperation.operation_date >= operation_date_from)
+    if limit is not None and limit > 0:
+        stmt = stmt.limit(limit)
+
+    result = session.execute(stmt)
+    return list(result.scalars().all())
+
+
+def update_cashless_expense_classification(
+    session: Session,
+    *,
+    operation_id: int,
+    business_date: Any,
+    structure_code: str,
+    structure_name: str,
+    operation_code: str,
+    operation_name: str,
+    classification_source: str,
+) -> int:
+    """Сохранить управленческую классификацию исходящей операции."""
+    result = session.execute(
+        update(TBankStatementOperation)
+        .where(TBankStatementOperation.id == operation_id)
+        .values(
+            cashless_expense_business_date=business_date,
+            cashless_expense_structure_code=structure_code or None,
+            cashless_expense_structure_name=structure_name or None,
+            cashless_expense_operation_code=operation_code or None,
+            cashless_expense_operation_name=operation_name or None,
+            cashless_expense_classification_source=classification_source or None,
+            updated_at=datetime.utcnow(),
+        )
+    )
+    return int(result.rowcount or 0)
+
+
+def replace_daily_expense_allocations(
+    session: Session,
+    *,
+    operation_ids: list[int],
+    allocation_rows: list[dict[str, Any]],
+) -> int:
+    """Полностью заменить дневные распределения для переданных операций."""
+    ids = [int(operation_id) for operation_id in operation_ids if operation_id]
+    if not ids:
+        return 0
+
+    session.execute(
+        delete(DailyExpenseAllocation)
+        .where(DailyExpenseAllocation.statement_operation_id.in_(ids))
+    )
+    if not allocation_rows:
+        return 0
+
+    now = datetime.utcnow()
+    rows = [
+        DailyExpenseAllocation(
+            statement_operation_id=int(row["statement_operation_id"]),
+            expense_date=row["expense_date"],
+            expense_code=str(row["expense_code"]),
+            expense_name=str(row["expense_name"]),
+            amount=row["amount"],
+            allocation_days=int(row["allocation_days"]),
+            allocation_method=str(row["allocation_method"]),
+            created_at=now,
+            updated_at=now,
+        )
+        for row in allocation_rows
+    ]
+    session.add_all(rows)
+    session.flush()
+    return len(rows)
 
 
 def get_unsynced_cashless_incomes(

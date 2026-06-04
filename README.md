@@ -95,6 +95,11 @@ python3 -m src.cli.import_counterparties_to_bitrix24
   а также формулы и форматирование `КСП` и `КСЗ` копируются из предыдущей строки.
 - Если явного кода нет, fallback-правила из `config/cashless_expense_fallback_rules.json`
   пытаются определить аналитику по повторяющимся фрагментам назначения платежа.
+- Для управленческой дневной прибыли cron сохраняет классификацию исходящих операций
+  в `tbank_statement_operations` и пересобирает `daily_expense_allocations`.
+  Сейчас в прибыль включаются только `183` (`ГСМ`) и `185` (`Утилизация (полигон)`):
+  полигоны относятся на день операции, ГСМ распределяется на
+  `PROFIT_FUEL_ALLOCATION_DAYS` дней (по умолчанию 2).
 - Входящие операции дополнительно выгружаются в Google Sheets во вкладку `Безнал-Доходы`.
   Повторная выгрузка контролируется полем `cashless_income_sheet_synced_at`.
   `Структура` заполняется дефолтным значением из `GOOGLE_CASHLESS_DEFAULT_STRUCTURE_CODE`
@@ -134,6 +139,8 @@ GOOGLE_CASHLESS_EXPENSES_SHEET_NAME=Безнал-Расходы
 GOOGLE_CASHLESS_INCOMES_SHEET_NAME=Безнал-Доходы
 GOOGLE_CASHLESS_EXPENSE_SYNC_LIMIT=5000
 GOOGLE_CASHLESS_INCOME_SYNC_LIMIT=5000
+PROFIT_EXPENSE_CLASSIFICATION_LIMIT=5000
+PROFIT_FUEL_ALLOCATION_DAYS=2
 GOOGLE_CASHLESS_DEFAULT_STRUCTURE_CODE=1202
 TBANK_STATEMENT_DEFAULT_ACCOUNT_LABEL=Благосервис ТБанк
 # опционально для нескольких счетов:

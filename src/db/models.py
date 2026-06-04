@@ -230,6 +230,12 @@ class TBankStatementOperation(Base):
     counterparty_account = Column(String(32), nullable=True)
     is_incoming = Column(Boolean, nullable=False, default=False)
     cashless_expense_sheet_synced_at = Column(DateTime, nullable=True)
+    cashless_expense_business_date = Column(Date, nullable=True)
+    cashless_expense_structure_code = Column(String(16), nullable=True)
+    cashless_expense_structure_name = Column(String(255), nullable=True)
+    cashless_expense_operation_code = Column(String(16), nullable=True)
+    cashless_expense_operation_name = Column(String(255), nullable=True)
+    cashless_expense_classification_source = Column(String(32), nullable=True)
     cashless_income_sheet_synced_at = Column(DateTime, nullable=True)
     matched_invoice_id = Column(Integer, ForeignKey("invoices.id", ondelete="SET NULL"), nullable=True)
     match_confidence = Column(Numeric(5, 4), nullable=True)
@@ -255,6 +261,44 @@ class TBankStatementOperation(Base):
             "cashless_income_sheet_synced_at",
             "operation_date",
         ),
+        Index(
+            "ix_tbank_statement_ops_expense_profit",
+            "is_incoming",
+            "cashless_expense_operation_code",
+            "cashless_expense_business_date",
+        ),
+    )
+
+
+class DailyExpenseAllocation(Base):
+    """Дневное распределение управленческих расходов из банковской выписки."""
+    __tablename__ = "daily_expense_allocations"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    statement_operation_id = Column(
+        Integer,
+        ForeignKey("tbank_statement_operations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    expense_date = Column(Date, nullable=False)
+    expense_code = Column(String(16), nullable=False)
+    expense_name = Column(String(255), nullable=False)
+    amount = Column(Numeric(14, 2), nullable=False)
+    allocation_days = Column(Integer, nullable=False, default=1)
+    allocation_method = Column(String(32), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    statement_operation = relationship("TBankStatementOperation", backref="daily_expense_allocations")
+    __table_args__ = (
+        UniqueConstraint(
+            "statement_operation_id",
+            "expense_date",
+            "expense_code",
+            name="uq_daily_expense_allocations_operation_day_code",
+        ),
+        Index("ix_daily_expense_allocations_date_code", "expense_date", "expense_code"),
+        Index("ix_daily_expense_allocations_code_date", "expense_code", "expense_date"),
     )
 
 

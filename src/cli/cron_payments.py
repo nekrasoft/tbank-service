@@ -50,7 +50,12 @@ _DEFAULT_UNMATCHED_LIMIT = 5000
 _DEFAULT_PAYMENT_THANK_EMAIL_LIMIT = 5000
 _DEFAULT_CASHLESS_EXPENSE_SYNC_LIMIT = 5000
 _DEFAULT_CASHLESS_INCOME_SYNC_LIMIT = 5000
+_DEFAULT_PROFIT_EXPENSE_CLASSIFICATION_LIMIT = 5000
+_DEFAULT_PROFIT_FUEL_ALLOCATION_DAYS = 2
 _DEFAULT_CASHLESS_ACCOUNT_LABEL = "Благосервис ТБанк"
+_PROFIT_FUEL_EXPENSE_CODE = "183"
+_PROFIT_LANDFILL_EXPENSE_CODE = "185"
+_PROFIT_EXPENSE_CODES = {_PROFIT_FUEL_EXPENSE_CODE, _PROFIT_LANDFILL_EXPENSE_CODE}
 DEBUG_FORCE_EMAIL = (os.environ.get("DEBUG_FORCE_EMAIL") or "").strip() or None
 
 _INVOICE_HINT_RE = re.compile(
@@ -534,6 +539,24 @@ def _cashless_expense_fallback_rule_result(
     )
 
 
+def _cashless_expense_fallback_rule_details(
+    rule: dict[str, Any],
+    *,
+    default_structure_code: str,
+    structure_by_code: dict[str, str],
+    operation_by_code: dict[str, str],
+) -> dict[str, str]:
+    structure_code = str(rule.get("structure_code") or default_structure_code).strip()
+    operation_code = str(rule.get("operation_code") or "").strip()
+    return {
+        "structure_code": structure_code,
+        "structure_name": structure_by_code.get(structure_code, ""),
+        "operation_code": operation_code,
+        "operation_name": operation_by_code.get(operation_code, ""),
+        "classification_source": "fallback",
+    }
+
+
 def _match_cashless_expense_fallback_rule(
     pay_purpose: str,
     counterparty: str,
@@ -568,6 +591,48 @@ def _match_cashless_expense_fallback_rule(
         )
 
     return "", ""
+
+
+def _match_cashless_expense_fallback_rule_details(
+    pay_purpose: str,
+    counterparty: str,
+    *,
+    fallback_rules: dict[str, Any],
+    structure_by_code: dict[str, str],
+    operation_by_code: dict[str, str],
+) -> dict[str, str]:
+    normalized_pay_purpose = _normalize_cashless_rule_text(pay_purpose)
+    normalized_counterparty = _normalize_cashless_rule_text(counterparty)
+    default_structure_code = str(fallback_rules.get("default_structure_code") or "").strip()
+    rules = fallback_rules.get("rules") or []
+
+    for rule in rules:
+        if not _cashless_rule_contains_any(normalized_counterparty, rule.get("counterparty_contains_any")):
+            continue
+        return _cashless_expense_fallback_rule_details(
+            rule,
+            default_structure_code=default_structure_code,
+            structure_by_code=structure_by_code,
+            operation_by_code=operation_by_code,
+        )
+
+    for rule in rules:
+        if not _cashless_rule_contains_any(normalized_pay_purpose, rule.get("contains_any")):
+            continue
+        return _cashless_expense_fallback_rule_details(
+            rule,
+            default_structure_code=default_structure_code,
+            structure_by_code=structure_by_code,
+            operation_by_code=operation_by_code,
+        )
+
+    return {
+        "structure_code": "",
+        "structure_name": "",
+        "operation_code": "",
+        "operation_name": "",
+        "classification_source": "",
+    }
 
 
 def _parse_pay_purpose_analytics(
@@ -606,6 +671,43 @@ def _parse_pay_purpose_analytics(
         structure_name or fallback_structure_name,
         operation_name or fallback_operation_name,
     )
+
+
+def _parse_pay_purpose_analytics_details(
+    pay_purpose: str,
+    counterparty: str,
+    *,
+    structure_by_code: dict[str, str],
+    operation_by_code: dict[str, str],
+    fallback_rules: dict[str, Any],
+) -> dict[str, str]:
+    match = _PAY_PURPOSE_ANALYTICS_CODE_RE.match(pay_purpose or "")
+    if not match:
+        return _match_cashless_expense_fallback_rule_details(
+            pay_purpose,
+            counterparty,
+            fallback_rules=fallback_rules,
+            structure_by_code=structure_by_code,
+            operation_by_code=operation_by_code,
+        )
+
+    structure_code = match.group(1)
+    operation_code = match.group(2).lstrip("0") or "0"
+    fallback = _match_cashless_expense_fallback_rule_details(
+        pay_purpose,
+        counterparty,
+        fallback_rules=fallback_rules,
+        structure_by_code=structure_by_code,
+        operation_by_code=operation_by_code,
+    )
+
+    return {
+        "structure_code": structure_code or fallback["structure_code"],
+        "structure_name": structure_by_code.get(structure_code, "") or fallback["structure_name"],
+        "operation_code": operation_code or fallback["operation_code"],
+        "operation_name": operation_by_code.get(operation_code, "") or fallback["operation_name"],
+        "classification_source": "pay_purpose_code",
+    }
 
 
 def _cashless_operation_date(operation: Any) -> date | None:
@@ -2030,6 +2132,136 @@ def _build_cashless_expense_sheet_rows(
     return rows
 
 
+def _split_amount_by_days(amount: Decimal, days: int) -> list[Decimal]:
+    days = max(1, int(days))
+    amount = Decimal(str(amount)).quantize(_MONEY_Q, rounding=ROUND_HALF_UP)
+    if days == 1:
+        return [amount]
+
+    daily_amount = (amount / Decimal(days)).quantize(_MONEY_Q, rounding=ROUND_HALF_UP)
+    result = [daily_amount for _ in range(days - 1)]
+    result.append((amount - sum(result, Decimal("0.00"))).quantize(_MONEY_Q, rounding=ROUND_HALF_UP))
+    return result
+
+
+def _daily_expense_allocation_rows_for_operation(
+    operation: Any,
+    *,
+    fuel_allocation_days: int,
+) -> list[dict[str, Any]]:
+    business_day = getattr(operation, "cashless_expense_business_date", None)
+    expense_code = str(getattr(operation, "cashless_expense_operation_code", "") or "").strip()
+    expense_name = str(getattr(operation, "cashless_expense_operation_name", "") or "").strip()
+    amount = _operation_amount_from_row(operation)
+
+    if business_day is None or expense_code not in _PROFIT_EXPENSE_CODES or amount <= 0:
+        return []
+
+    allocation_days = fuel_allocation_days if expense_code == _PROFIT_FUEL_EXPENSE_CODE else 1
+    allocation_days = max(1, allocation_days)
+    allocation_method = "fixed_days" if expense_code == _PROFIT_FUEL_EXPENSE_CODE else "operation_day"
+
+    rows: list[dict[str, Any]] = []
+    for day_offset, daily_amount in enumerate(_split_amount_by_days(amount, allocation_days)):
+        rows.append(
+            {
+                "statement_operation_id": int(operation.id),
+                "expense_date": business_day + timedelta(days=day_offset),
+                "expense_code": expense_code,
+                "expense_name": expense_name,
+                "amount": daily_amount,
+                "allocation_days": allocation_days,
+                "allocation_method": allocation_method,
+            }
+        )
+    return rows
+
+
+def _classify_cashless_expenses_for_profit(
+    *,
+    limit: int,
+    fuel_allocation_days: int,
+    force: bool = False,
+    from_date: date | None = None,
+) -> dict[str, int]:
+    from src.db.connection import get_session
+    from src.db.repos import statement_operations as st_ops_repo
+
+    session = get_session()
+    try:
+        operations = st_ops_repo.get_cashless_expenses_for_classification(
+            session,
+            limit=limit,
+            operation_date_from=_cashless_expense_sync_from(from_date),
+            include_classified=force,
+        )
+        stats = {
+            "candidates": len(operations),
+            "classified": 0,
+            "tracked": 0,
+            "allocations": 0,
+        }
+        if not operations:
+            logger.info("Прибыль: нет исходящих операций для классификации расходов (force=%s)", force)
+            return stats
+
+        structure_by_code = _load_code_dictionary("structure.json")
+        operation_by_code = _load_code_dictionary("operation.json")
+        fallback_rules = _load_cashless_expense_fallback_rules()
+        allocation_rows: list[dict[str, Any]] = []
+        processed_operation_ids: list[int] = []
+
+        for operation in operations:
+            business_day = _cashless_operation_date(operation)
+            if business_day is None:
+                continue
+
+            counterparty = _operation_counterparty_for_expense(operation)
+            analytics = _parse_pay_purpose_analytics_details(
+                _operation_purpose_for_sheet(operation),
+                counterparty,
+                structure_by_code=structure_by_code,
+                operation_by_code=operation_by_code,
+                fallback_rules=fallback_rules,
+            )
+            st_ops_repo.update_cashless_expense_classification(
+                session,
+                operation_id=int(operation.id),
+                business_date=business_day,
+                structure_code=analytics["structure_code"],
+                structure_name=analytics["structure_name"],
+                operation_code=analytics["operation_code"],
+                operation_name=analytics["operation_name"],
+                classification_source=analytics["classification_source"],
+            )
+            operation.cashless_expense_business_date = business_day
+            operation.cashless_expense_operation_code = analytics["operation_code"]
+            operation.cashless_expense_operation_name = analytics["operation_name"]
+            processed_operation_ids.append(int(operation.id))
+            stats["classified"] += 1
+
+            rows = _daily_expense_allocation_rows_for_operation(
+                operation,
+                fuel_allocation_days=fuel_allocation_days,
+            )
+            if rows:
+                stats["tracked"] += 1
+                allocation_rows.extend(rows)
+
+        stats["allocations"] = st_ops_repo.replace_daily_expense_allocations(
+            session,
+            operation_ids=processed_operation_ids,
+            allocation_rows=allocation_rows,
+        )
+        session.commit()
+        return stats
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
 def _sync_cashless_expenses_to_sheets(
     *,
     limit: int,
@@ -2529,12 +2761,25 @@ def main() -> None:
         min_value=1,
         max_value=100_000,
     )
+    profit_expense_classification_limit = _env_int(
+        "PROFIT_EXPENSE_CLASSIFICATION_LIMIT",
+        _DEFAULT_PROFIT_EXPENSE_CLASSIFICATION_LIMIT,
+        min_value=1,
+        max_value=100_000,
+    )
+    profit_fuel_allocation_days = _env_int(
+        "PROFIT_FUEL_ALLOCATION_DAYS",
+        _DEFAULT_PROFIT_FUEL_ALLOCATION_DAYS,
+        min_value=1,
+        max_value=31,
+    )
 
     logger.info(
         (
             "Запуск cron_payments accounts=%s initial_lookback_days=%s overlap_minutes=%s "
             "page_limit=%s statement_date=%s payment_thank_email_limit=%s cashless_expense_sync_limit=%s "
             "cashless_income_sync_limit=%s force_cashless_expenses=%s cashless_expenses_from_date=%s "
+            "profit_expense_classification_limit=%s profit_fuel_allocation_days=%s "
             "force_cashless_incomes=%s cashless_incomes_from_date=%s "
             "dry_run=%s dry_run_bitrix=%s"
         ),
@@ -2548,6 +2793,8 @@ def main() -> None:
         cashless_income_sync_limit,
         args.force_cashless_expenses,
         args.cashless_expenses_from_date.isoformat() if args.cashless_expenses_from_date else None,
+        profit_expense_classification_limit,
+        profit_fuel_allocation_days,
         args.force_cashless_incomes,
         args.cashless_incomes_from_date.isoformat() if args.cashless_incomes_from_date else None,
         args.dry_run,
@@ -2639,7 +2886,7 @@ def main() -> None:
             logger.info(
                 "DRY-RUN: вызовы Bitrix24 отключены (используйте --dry-run --dry-run-bitrix)"
             )
-        logger.info("DRY-RUN: sync расходов/доходов в Sheets и thank-you email отключены")
+        logger.info("DRY-RUN: sync расходов/доходов в Sheets, прибыль и thank-you email отключены")
 
         logger.info(
             (
@@ -2698,6 +2945,26 @@ def main() -> None:
         logger.error("Синк выписки завершился с ошибками: %s", sync_errors)
         sys.exit(1)
 
+    profit_expense_stats = {
+        "candidates": 0,
+        "classified": 0,
+        "tracked": 0,
+        "allocations": 0,
+        "failed": 0,
+    }
+    try:
+        profit_expense_stats.update(
+            _classify_cashless_expenses_for_profit(
+                limit=profit_expense_classification_limit,
+                fuel_allocation_days=profit_fuel_allocation_days,
+                force=args.force_cashless_expenses,
+                from_date=args.cashless_expenses_from_date,
+            )
+        )
+    except Exception:
+        profit_expense_stats["failed"] = 1
+        logger.exception("Ошибка классификации расходов для дневной прибыли")
+
     cashless_expense_stats = {
         "candidates": 0,
         "appended": 0,
@@ -2751,6 +3018,7 @@ def main() -> None:
             "cron_payments завершен: fetched=%s created=%s existing=%s skipped_out_of_window=%s matched=%s "
             "invoice_state_updates=%s (paid=%s partially_paid=%s issued=%s) "
             "cashless_expenses_candidates=%s appended=%s skipped_existing=%s marked=%s failed=%s "
+            "profit_expenses_candidates=%s classified=%s tracked=%s allocations=%s failed=%s "
             "cashless_incomes_candidates=%s appended=%s skipped_existing=%s marked=%s failed=%s "
             "payment_thanks_candidates=%s sent=%s failed=%s skipped=%s"
         ),
@@ -2768,6 +3036,11 @@ def main() -> None:
         cashless_expense_stats.get("skipped_existing", 0),
         cashless_expense_stats.get("marked", 0),
         cashless_expense_stats.get("failed", 0),
+        profit_expense_stats.get("candidates", 0),
+        profit_expense_stats.get("classified", 0),
+        profit_expense_stats.get("tracked", 0),
+        profit_expense_stats.get("allocations", 0),
+        profit_expense_stats.get("failed", 0),
         cashless_income_stats.get("candidates", 0),
         cashless_income_stats.get("appended", 0),
         cashless_income_stats.get("skipped_existing", 0),

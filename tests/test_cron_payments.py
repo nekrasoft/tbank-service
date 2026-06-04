@@ -205,3 +205,96 @@ def test_extract_invoice_numbers_multiple_with_dates_and_leading_zeros() -> None
     text = "Оплата по счету № 00199 от 30.04.2026, № 00209 от 02.05.2026"
 
     assert _extract_invoice_numbers(text) == {"199", "209"}
+
+
+def test_profit_fuel_expense_allocates_amount_by_fixed_days() -> None:
+    operation = SimpleNamespace(
+        id=10,
+        operation_amount=Decimal("30000.00"),
+        account_amount=None,
+        ruble_amount=None,
+        cashless_expense_business_date=date(2026, 6, 1),
+        cashless_expense_operation_code="183",
+        cashless_expense_operation_name="ГСМ",
+    )
+
+    rows = cron_payments._daily_expense_allocation_rows_for_operation(
+        operation,
+        fuel_allocation_days=2,
+    )
+
+    assert rows == [
+        {
+            "statement_operation_id": 10,
+            "expense_date": date(2026, 6, 1),
+            "expense_code": "183",
+            "expense_name": "ГСМ",
+            "amount": Decimal("15000.00"),
+            "allocation_days": 2,
+            "allocation_method": "fixed_days",
+        },
+        {
+            "statement_operation_id": 10,
+            "expense_date": date(2026, 6, 2),
+            "expense_code": "183",
+            "expense_name": "ГСМ",
+            "amount": Decimal("15000.00"),
+            "allocation_days": 2,
+            "allocation_method": "fixed_days",
+        },
+    ]
+
+
+def test_profit_landfill_expense_allocates_to_operation_day() -> None:
+    operation = SimpleNamespace(
+        id=11,
+        operation_amount=Decimal("10600.00"),
+        account_amount=None,
+        ruble_amount=None,
+        cashless_expense_business_date=date(2026, 6, 1),
+        cashless_expense_operation_code="185",
+        cashless_expense_operation_name="Утилизация (полигон)",
+    )
+
+    rows = cron_payments._daily_expense_allocation_rows_for_operation(
+        operation,
+        fuel_allocation_days=2,
+    )
+
+    assert rows == [
+        {
+            "statement_operation_id": 11,
+            "expense_date": date(2026, 6, 1),
+            "expense_code": "185",
+            "expense_name": "Утилизация (полигон)",
+            "amount": Decimal("10600.00"),
+            "allocation_days": 1,
+            "allocation_method": "operation_day",
+        },
+    ]
+
+
+def test_cashless_expense_analytics_details_returns_codes_from_fallback_rule() -> None:
+    analytics = cron_payments._parse_pay_purpose_analytics_details(
+        "Оплата топлива AZS",
+        "АЗС",
+        structure_by_code={"1202": "ЮЛ - Контейнеры"},
+        operation_by_code={"183": "ГСМ"},
+        fallback_rules={
+            "default_structure_code": "1202",
+            "rules": [
+                {
+                    "contains_any": ["azs"],
+                    "operation_code": "183",
+                }
+            ],
+        },
+    )
+
+    assert analytics == {
+        "structure_code": "1202",
+        "structure_name": "ЮЛ - Контейнеры",
+        "operation_code": "183",
+        "operation_name": "ГСМ",
+        "classification_source": "fallback",
+    }
