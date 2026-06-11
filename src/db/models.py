@@ -195,6 +195,10 @@ class InvoiceItem(Base):
     unit = Column(String(50), nullable=False, default="шт")
     vat = Column(String(10), nullable=True, default="None")
 
+    __table_args__ = (
+        Index("ix_invoice_items_invoice_id", "invoice_id"),
+    )
+
 
 class TBankStatementOperation(Base):
     """Операция из выписки T-Bank (raw + нормализованные поля + результат матчинга)."""
