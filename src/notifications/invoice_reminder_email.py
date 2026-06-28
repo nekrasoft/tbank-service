@@ -6,12 +6,15 @@ from decimal import Decimal, ROUND_HALF_UP
 from email.header import Header
 from email.message import EmailMessage
 from email.utils import formataddr
+from io import BytesIO
 import logging
 import mimetypes
 import os
 import re
 import smtplib
 from typing import Any
+
+from PIL import Image
 
 logger = logging.getLogger(__name__)
 
@@ -213,6 +216,14 @@ def _normalize_file_content(value: Any) -> bytes:
     return b""
 
 
+def _is_webp(file_content: bytes) -> bool:
+    return (
+        len(file_content) >= 12
+        and file_content[:4] == b"RIFF"
+        and file_content[8:12] == b"WEBP"
+    )
+
+
 def _guess_file_extension(*, content_type: str | None, file_content: bytes) -> str:
     """Определяет расширение файла по содержимому и MIME."""
     if file_content.startswith(b"\xff\xd8\xff"):
@@ -221,11 +232,27 @@ def _guess_file_extension(*, content_type: str | None, file_content: bytes) -> s
         return ".png"
     if file_content.startswith(b"%PDF"):
         return ".pdf"
-    if len(file_content) >= 12 and file_content[:4] == b"RIFF" and file_content[8:12] == b"WEBP":
+    if _is_webp(file_content):
         return ".webp"
 
     content_type_norm = str(content_type or "").split(";", 1)[0].strip()
     return mimetypes.guess_extension(content_type_norm) or ".bin"
+
+
+def _convert_webp_to_jpeg(file_content: bytes) -> bytes:
+    """Конвертирует WebP в совместимый с почтовыми клиентами JPEG."""
+    with Image.open(BytesIO(file_content)) as image:
+        image.seek(0)
+        if "A" in image.getbands():
+            rgba_image = image.convert("RGBA")
+            jpeg_image = Image.new("RGB", rgba_image.size, "white")
+            jpeg_image.paste(rgba_image, mask=rgba_image.getchannel("A"))
+        else:
+            jpeg_image = image.convert("RGB")
+
+        output = BytesIO()
+        jpeg_image.save(output, format="JPEG", quality=90)
+        return output.getvalue()
 
 
 def _is_usable_file_name(file_name: str) -> bool:
@@ -279,7 +306,16 @@ def _normalize_email_attachments(
         maintype = str(attachment.get("maintype") or "").strip()
         subtype = str(attachment.get("subtype") or "").strip()
         content_type = str(attachment.get("content_type") or "").split(";", 1)[0].strip()
-        if not (maintype and subtype):
+        if _is_webp(file_content):
+            try:
+                file_content = _convert_webp_to_jpeg(file_content)
+            except (OSError, ValueError) as exc:
+                raise ValueError(
+                    f"Не удалось конвертировать WebP-вложение {file_name} в JPEG"
+                ) from exc
+            file_name = f"{os.path.splitext(file_name)[0]}.jpg"
+            maintype, subtype = "image", "jpeg"
+        elif not (maintype and subtype):
             if not content_type:
                 guessed_type, _encoding = mimetypes.guess_type(file_name)
                 content_type = guessed_type or "application/octet-stream"
