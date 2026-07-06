@@ -49,6 +49,7 @@ _CONTAINER_VOLUME_M3 = Decimal("8.00")
 _TRIP_REMOVAL_STRUCTURES = {
     "юл - вывоз мусора",
     "фл - вывоз мусора",
+    "тендеры - вывоз мусора",
 }
 _CONTAINER_STRUCTURES = {
     "юл - контейнеры",
