@@ -14,3 +14,16 @@ def test_prepare_tender_work_extracts_volume_from_note():
 
     assert note == "Полигон"
     assert volume == Decimal("154.00")
+
+
+def test_prepare_container_work_uses_fractional_object_count_for_volume():
+    note, volume = _prepare_work_note_and_volume(
+        {
+            "structure": "ЮЛ - Контейнеры",
+            "note": "Знак # 1,2",
+            "object_count": "1,5",
+        }
+    )
+
+    assert note == "Знак # 1,2"
+    assert volume == Decimal("12.00")
