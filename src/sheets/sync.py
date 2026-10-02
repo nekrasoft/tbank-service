@@ -334,32 +334,35 @@ def _sync_counterparties_rows(session: Session, rows: list[dict]) -> tuple[int, 
     return created, updated, skipped
 
 
-def _link_waybill_file(session: Session, row: dict, work_id: int) -> str:
-    token = str(row.get("waybill_file_token") or "").strip()
-    if not token:
-        return "none"
-
-    work_file = works_files_repo.link_to_work_by_token(
-        session,
-        file_token=token,
-        work_id=work_id,
-    )
-    if work_file is None:
-        logger.warning(
-            "Синхронизация: в строке hash=%s указан путевой лист %s, но файл не найден в works_files",
-            row.get("sheet_row_hash"),
-            token,
+def _link_waybill_files(session: Session, row: dict, work_id: int) -> list[str]:
+    statuses = []
+    for raw_token in row.get("waybill_file_tokens") or []:
+        token = str(raw_token or "").strip()
+        if not token:
+            continue
+        work_file = works_files_repo.link_to_work_by_token(
+            session,
+            file_token=token,
+            work_id=work_id,
         )
-        return "missing"
-    if work_file.work_id != work_id:
-        logger.warning(
-            "Синхронизация: путевой лист %s уже привязан к work_id=%s, текущая работа work_id=%s",
-            token,
-            work_file.work_id,
-            work_id,
-        )
-        return "conflict"
-    return "linked"
+        if work_file is None:
+            logger.warning(
+                "Синхронизация: в строке hash=%s указан путевой лист %s, но файл не найден в works_files",
+                row.get("sheet_row_hash"),
+                token,
+            )
+            statuses.append("missing")
+        elif work_file.work_id != work_id:
+            logger.warning(
+                "Синхронизация: путевой лист %s уже привязан к work_id=%s, текущая работа work_id=%s",
+                token,
+                work_file.work_id,
+                work_id,
+            )
+            statuses.append("conflict")
+        else:
+            statuses.append("linked")
+    return statuses
 
 
 def sync_sheets_to_mysql(
@@ -424,13 +427,10 @@ def sync_sheets_to_mysql(
                     existing_work.volume = parsed_volume
                     volume_updated += 1
                 session.flush()
-                link_status = _link_waybill_file(session, row, existing_work.id)
-                if link_status == "linked":
-                    waybill_linked += 1
-                elif link_status == "missing":
-                    waybill_missing += 1
-                elif link_status == "conflict":
-                    waybill_conflicts += 1
+                link_statuses = _link_waybill_files(session, row, existing_work.id)
+                waybill_linked += link_statuses.count("linked")
+                waybill_missing += link_statuses.count("missing")
+                waybill_conflicts += link_statuses.count("conflict")
                 continue
 
             work = works_repo.create(
@@ -445,13 +445,10 @@ def sync_sheets_to_mysql(
                 revenue=parsed_revenue,
                 sheet_row_hash=row["sheet_row_hash"],
             )
-            link_status = _link_waybill_file(session, row, work.id)
-            if link_status == "linked":
-                waybill_linked += 1
-            elif link_status == "missing":
-                waybill_missing += 1
-            elif link_status == "conflict":
-                waybill_conflicts += 1
+            link_statuses = _link_waybill_files(session, row, work.id)
+            waybill_linked += link_statuses.count("linked")
+            waybill_missing += link_statuses.count("missing")
+            waybill_conflicts += link_statuses.count("conflict")
             added += 1
 
         session.commit()

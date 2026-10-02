@@ -8,16 +8,21 @@ WAYBILL_TOKEN_RE = re.compile(
 )
 
 
-def extract_waybill_token(note: str | None) -> tuple[str, str | None]:
+def extract_waybill_tokens(note: str | None) -> tuple[str, list[str]]:
     raw = str(note or "").strip()
     if not raw:
-        return "", None
+        return "", []
 
-    match = WAYBILL_TOKEN_RE.search(raw)
-    if not match:
-        return raw, None
+    tokens = [match.group("token") for match in WAYBILL_TOKEN_RE.finditer(raw)]
+    if not tokens:
+        return raw, []
 
-    clean_note = (raw[: match.start()] + raw[match.end() :]).strip()
+    clean_note = WAYBILL_TOKEN_RE.sub("", raw).strip()
     clean_note = re.sub(r"\s{2,}", " ", clean_note)
     clean_note = clean_note.strip(" ;,")
-    return clean_note, match.group("token")
+    return clean_note, tokens
+
+
+def extract_waybill_token(note: str | None) -> tuple[str, str | None]:
+    clean_note, tokens = extract_waybill_tokens(note)
+    return clean_note, tokens[0] if tokens else None

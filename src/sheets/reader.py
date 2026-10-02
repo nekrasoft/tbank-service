@@ -14,7 +14,7 @@ from urllib.parse import parse_qs, urlparse
 import gspread
 from google.oauth2.service_account import Credentials
 
-from src.sheets.waybill_notes import extract_waybill_token
+from src.sheets.waybill_notes import extract_waybill_tokens
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 SCHEMA_PATH = PROJECT_ROOT / "config" / "schema.json"
@@ -96,7 +96,7 @@ def read_works(
 
     Возвращает список словарей с ключами:
     date, counterparty_name, note, structure, operation, object_count, revenue,
-    sheet_row_hash, waybill_file_token
+    sheet_row_hash, waybill_file_tokens
     """
     schema = _load_schema()
     url = sheet_url or os.environ.get("GOOGLE_SHEET_URL") or schema.get("google_sheet_url")
@@ -158,7 +158,7 @@ def read_works(
             continue
         counterparty = _clean_cell(row.get("Контрагент", ""))
         raw_note = _clean_cell(row.get("Примечание", ""))
-        note, waybill_file_token = extract_waybill_token(raw_note)
+        note, waybill_file_tokens = extract_waybill_tokens(raw_note)
         structure = _clean_cell(row.get("Структура", ""))
         operation = _clean_cell(row.get("Операция", ""))
         if operation != "Поступление по основной деятельности":
@@ -179,7 +179,7 @@ def read_works(
             "object_count": object_count,
             "revenue": revenue,
             "sheet_row_hash": sheet_row_hash,
-            "waybill_file_token": waybill_file_token,
+            "waybill_file_tokens": waybill_file_tokens,
         })
     return works
 
