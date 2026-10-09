@@ -9,7 +9,7 @@ WAYBILL_TOKEN_RE = re.compile(
 
 
 def extract_waybill_tokens(note: str | None) -> tuple[str, list[str]]:
-    raw = str(note or "").strip()
+    raw = re.sub(r"\s*\[ВЫВОЗ:[a-f0-9-]{36}\]", "", str(note or "")).strip()
     if not raw:
         return "", []
 
