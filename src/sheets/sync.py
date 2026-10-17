@@ -143,7 +143,10 @@ def _prepare_work_note_and_volume(row: dict) -> tuple[str, Decimal | None]:
     note = str(row.get("note") or "").strip()
 
     if structure in _TRIP_REMOVAL_STRUCTURES:
-        return _parse_volume_note(note)
+        clean_note, note_volume = _parse_volume_note(note)
+        if row.get("billing_unit") == "м³":
+            return clean_note, _parse_revenue(row.get("volume"))
+        return clean_note, note_volume
 
     if structure in _CONTAINER_STRUCTURES:
         amount = _parse_positive_decimal(
@@ -419,13 +422,16 @@ def sync_sheets_to_mysql(
 
             existing_work = works_repo.get_by_hash(session, row["sheet_row_hash"])
             if existing_work is not None:
-                existing_work.note = note.strip() or None
-                if parsed_revenue is not None:
-                    existing_work.revenue = parsed_revenue
-                    revenue_updated += 1
-                if parsed_volume is not None:
-                    existing_work.volume = parsed_volume
-                    volume_updated += 1
+                if existing_work.invoice_id is None:
+                    existing_work.billing_unit = row.get("billing_unit") or None
+                    existing_work.tariff = _parse_revenue(row.get("tariff"))
+                    existing_work.note = note.strip() or None
+                    if parsed_revenue is not None:
+                        existing_work.revenue = parsed_revenue
+                        revenue_updated += 1
+                    if parsed_volume is not None:
+                        existing_work.volume = parsed_volume
+                        volume_updated += 1
                 session.flush()
                 link_statuses = _link_waybill_files(session, row, existing_work.id)
                 waybill_linked += link_statuses.count("linked")
@@ -443,6 +449,8 @@ def sync_sheets_to_mysql(
                 object_count=row["object_count"],
                 volume=parsed_volume,
                 revenue=parsed_revenue,
+                billing_unit=row.get("billing_unit") or None,
+                tariff=_parse_revenue(row.get("tariff")),
                 sheet_row_hash=row["sheet_row_hash"],
             )
             link_statuses = _link_waybill_files(session, row, work.id)

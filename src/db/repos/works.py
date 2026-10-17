@@ -141,6 +141,8 @@ def create(
     operation: str,
     object_count: str,
     volume: Decimal | None = None,
+    billing_unit: str | None = None,
+    tariff: Decimal | None = None,
     revenue: Decimal | None = None,
     sheet_row_hash: str,
 ) -> Work:
@@ -154,6 +156,8 @@ def create(
         object_count=object_count or "1",
         volume=volume,
         revenue=revenue,
+        billing_unit=billing_unit,
+        tariff=tariff,
         sheet_row_hash=sheet_row_hash,
     )
     session.add(work)

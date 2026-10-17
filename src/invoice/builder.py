@@ -338,29 +338,46 @@ def build_invoice_items(
         if op_type not in op_type_order:
             op_type_order.append(op_type)
 
-        amount_dec = _parse_amount_decimal(w.object_count)
-        revenue = _parse_revenue(getattr(w, "revenue", None))
-        if revenue is not None:
-            unit_price = (revenue / amount_dec).quantize(_MONEY_Q, rounding=ROUND_HALF_UP)
+        billing_unit = getattr(w, "billing_unit", None)
+        unit = "шт"
+        if billing_unit == "м³":
+            if op_type != "trip_removal":
+                raise ValueError("Тариф за м³ допустим только для вывоза с земли")
+            volume = _parse_revenue(getattr(w, "volume", None))
+            unit_price = _parse_revenue(getattr(w, "tariff", None))
+            if volume is None or volume <= 0 or unit_price is None or unit_price <= 0:
+                raise ValueError(f"Не заполнен объём или тариф за м³ для работы {w.id}")
+            amount_dec = volume
+            unit = "м³"
+            revenue = _parse_revenue(getattr(w, "revenue", None))
+            expected = (amount_dec * unit_price).quantize(_MONEY_Q, rounding=ROUND_HALF_UP)
+            if revenue is None or revenue != expected:
+                raise ValueError(f"Выручка не совпадает с объёмом и тарифом для работы {w.id}")
+        elif billing_unit not in (None, "", "бункер", "ходка"):
+            raise ValueError(f"Неизвестная единица тарифа: {billing_unit}")
         else:
-            price_rec = _get_price_record(op_type)
-            if not price_rec:
-                raise ValueError(
-                    f"Не найдена цена для контрагента id={counterparty_id}, тип операции={op_type}"
-                )
-            unit_price = Decimal(str(price_rec.price)).quantize(_MONEY_Q, rounding=ROUND_HALF_UP)
+            amount_dec = _parse_amount_decimal(w.object_count)
+            revenue = _parse_revenue(getattr(w, "revenue", None))
+            if revenue is not None:
+                unit_price = (revenue / amount_dec).quantize(_MONEY_Q, rounding=ROUND_HALF_UP)
+            else:
+                price_rec = _get_price_record(op_type)
+                if not price_rec:
+                    raise ValueError(f"Не найдена цена для контрагента id={counterparty_id}, тип операции={op_type}")
+                unit_price = Decimal(str(price_rec.price)).quantize(_MONEY_Q, rounding=ROUND_HALF_UP)
 
         active = active_segment_by_type.get(op_type)
         if active is None:
             active_segment_by_type[op_type] = {
                 "unit_price": unit_price,
+                "unit": unit,
                 "amount": amount_dec,
                 "start_date": w.date,
                 "end_date": w.date,
             }
             continue
 
-        if active["unit_price"] != unit_price:
+        if active["unit_price"] != unit_price or active["unit"] != unit:
             segments_by_type[op_type].append(active)
             logger.info(
                 "Смена цены для %s: %s -> %s (с %s)",
@@ -371,6 +388,7 @@ def build_invoice_items(
             )
             active_segment_by_type[op_type] = {
                 "unit_price": unit_price,
+                "unit": unit,
                 "amount": amount_dec,
                 "start_date": w.date,
                 "end_date": w.date,
@@ -399,7 +417,7 @@ def build_invoice_items(
             items.append({
                 "name": display_name,
                 "price": float(unit_price),
-                "unit": "шт",
+                "unit": segment["unit"],
                 "vat": vat,
                 "amount": float(amount),
                 "operation_type": op_type,

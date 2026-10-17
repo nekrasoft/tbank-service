@@ -124,6 +124,7 @@ def read_works(
         "Операция",
         "Объект",
         *revenue_headers,
+        "Объём, м³", "Единица тарифа", "Тариф на дату вывоза",
     ]
     try:
         records = worksheet.get_all_records(expected_headers=required_headers)
@@ -178,6 +179,9 @@ def read_works(
             "operation": operation,
             "object_count": object_count,
             "revenue": revenue,
+            "volume": row.get("Объём, м³", ""),
+            "billing_unit": _clean_cell(row.get("Единица тарифа", "")),
+            "tariff": row.get("Тариф на дату вывоза", ""),
             "sheet_row_hash": sheet_row_hash,
             "waybill_file_tokens": waybill_file_tokens,
         })
