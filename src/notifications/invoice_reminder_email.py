@@ -564,7 +564,9 @@ def send_invoice_work_files(
     attachments: list[dict[str, Any]],
 ) -> None:
     """Отправка клиенту файлов выполненных работ по выставленному счёту."""
-    normalized_attachments = _normalize_email_attachments(attachments)
+    normalized_attachments = _normalize_email_attachments(
+        [attachment for attachment in attachments if attachment.get("kind") == "container_waybill"]
+    )
     if not normalized_attachments:
         logger.warning(
             "Email work_files: нет валидных вложений для отправки по счету %s",

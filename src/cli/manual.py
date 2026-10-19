@@ -86,6 +86,7 @@ def _build_bitrix_task_file_attachments(work_files: list[Any]) -> list[dict[str,
 
         attachments.append(
             {
+                "kind": getattr(work_file, "kind", None),
                 "work_file_id": getattr(work_file, "id", None),
                 "work_id": getattr(work_file, "work_id", None),
                 "file_token": getattr(work_file, "file_token", None),

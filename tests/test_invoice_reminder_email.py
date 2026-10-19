@@ -54,3 +54,23 @@ def test_png_work_file_keeps_original_format() -> None:
             "subtype": "png",
         }
     ]
+
+
+def test_work_files_email_contains_only_tickets_even_when_both_are_jpegs():
+    from datetime import date
+    from unittest.mock import patch
+    from src.notifications.invoice_reminder_email import send_invoice_work_files
+    jpeg = _build_image_bytes('JPEG')
+    attachments = [
+        {'kind': 'site_photo', 'file_name': 'site.jpg', 'content_type': 'image/jpeg', 'file_data': jpeg},
+        {'kind': 'container_waybill', 'file_name': 'ticket.jpg', 'content_type': 'image/jpeg', 'file_data': jpeg},
+        {'kind': 'container_waybill', 'file_name': 'ticket.pdf', 'content_type': 'application/pdf', 'file_data': b'%PDF-1.4'},
+    ]
+    with patch('src.notifications.invoice_reminder_email._send_invoice_email') as send:
+        send_invoice_work_files(recipients='test@example.com', invoice_number='1', counterparty_name='Клиент',
+            invoice_date=date(2026, 10, 19), payment_link=None, pdf_url=None, attachments=attachments)
+    assert [item['file_name'] for item in send.call_args.kwargs['attachments']] == ['ticket.jpg', 'ticket.pdf']
+    with patch('src.notifications.invoice_reminder_email._send_invoice_email') as send:
+        send_invoice_work_files(recipients='test@example.com', invoice_number='1', counterparty_name='Клиент',
+            invoice_date=date(2026, 10, 19), payment_link=None, pdf_url=None, attachments=attachments[:1])
+    send.assert_not_called()

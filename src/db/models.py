@@ -128,6 +128,7 @@ class WorkFile(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     file_token = Column(String(64), nullable=False, unique=True)
+    kind = Column(String(20), nullable=False, default="container_waybill", server_default="container_waybill")
     work_id = Column(Integer, ForeignKey("works.id", ondelete="SET NULL"), nullable=True)
     source = Column(String(20), nullable=False, comment="telegram или max")
     source_chat_id = Column(String(64), nullable=True)
