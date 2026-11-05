@@ -13,6 +13,7 @@ import time
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 # Загрузка .env
 _env = Path(__file__).resolve().parent.parent.parent / ".env"
@@ -33,7 +34,8 @@ TBANK_DELAY_SEC = 0.3
 DEBUG_FORCE_EMAIL = (os.environ.get("DEBUG_FORCE_EMAIL") or "").strip() or None
 
 # Окна выставления для периодичности.
-RUN_AT_EVENING_START_HOUR = 19
+MOSCOW_TIME_ZONE = ZoneInfo("Europe/Moscow")
+RUN_AT_EVENING_START_HOUR = 22
 BIWEEKLY_MIDMONTH_DAY = 15
 TEN_DAYS_FIRST_CUTOFF_DAY = 10
 TEN_DAYS_SECOND_CUTOFF_DAY = 20
@@ -49,11 +51,12 @@ def _is_counterparty_due(invoice_schedule: str | None, run_at: datetime) -> bool
     Проверка, должен ли контрагент выставляться в текущий запуск.
 
     Поддерживаемые значения:
-    - monthly: последний день месяца, после 19:00
-    - 2weeks: последний день месяца или 15 число, после 19:00
-    - 10days: 10-е, 20-е или последний день месяца, после 19:00
-    - daily: в любой день после 19:00
+    - monthly: последний день месяца, с 22:00 MSK
+    - 2weeks: последний день месяца или 15 число, с 22:00 MSK
+    - 10days: 10-е, 20-е или последний день месяца, с 22:00 MSK
+    - daily: в любой день с 22:00 MSK
     """
+    run_at = run_at.astimezone(MOSCOW_TIME_ZONE)
     schedule = (invoice_schedule or "monthly").strip().lower()
 
     if schedule == "daily":
@@ -202,7 +205,7 @@ def _prepare_pending_invoices(counterparty_name: str, run_at: datetime) -> list[
         if not work_groups:
             return []
 
-        today = date.today()
+        today = run_at.date()
         due_date = add_business_days(today, 5)
         prepared_invoices: list[dict[str, Any]] = []
         for group in work_groups:
@@ -396,8 +399,8 @@ def main() -> None:
     from src.tbank.client import send_invoice
 
     # 1. Синхронизация Sheets → MySQL
-    run_at = datetime.now()
-    logger.info("Время запуска крона: %s", run_at.strftime("%Y-%m-%d %H:%M:%S"))
+    run_at = datetime.now(MOSCOW_TIME_ZONE)
+    logger.info("Время запуска крона: %s", run_at.strftime("%Y-%m-%d %H:%M:%S %Z%z"))
     if DEBUG_FORCE_EMAIL:
         logger.warning("Используется DEBUG_FORCE_EMAIL override: %s", DEBUG_FORCE_EMAIL)
     logger.info("Синхронизация Sheets → MySQL...")
