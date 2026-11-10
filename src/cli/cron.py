@@ -396,7 +396,7 @@ def main() -> None:
     from src.notifications.telegram import send_invoice_notification_bytes
     from src.sheets.sync import sync_sheets_to_mysql
     from src.sheets.writer import mark_document_in_sheet
-    from src.tbank.client import send_invoice
+    from src.tbank.client import send_invoice, send_provided_services_act
 
     # 1. Синхронизация Sheets → MySQL
     run_at = datetime.now(MOSCOW_TIME_ZONE)
@@ -458,6 +458,25 @@ def main() -> None:
                     payment_link=str(invoice_link) if invoice_link else None,
                     recipient_emails_snapshot=recipient_emails_snapshot,
                 )
+                try:
+                    time.sleep(TBANK_DELAY_SEC)
+                    send_provided_services_act(
+                        document_number=invoice_number,
+                        act_date=prepared["invoice_date"],
+                        buyer_name=prepared["payer_name"],
+                        buyer_inn=prepared["payer_inn"],
+                        buyer_kpp=prepared["payer_kpp"],
+                        items=prepared["items"],
+                        email=target_email,
+                        contact_phone=prepared["contact_phone"],
+                        header_comment=(
+                            f"К счёту №{invoice_number} "
+                            f"от {prepared['invoice_date']:%d.%m.%Y}"
+                        ),
+                    )
+                except Exception as e:
+                    errors.append(f"{counterparty_name}: акт к счёту {invoice_number} — {e}")
+                    logger.exception("Ошибка создания акта к счёту %s", invoice_number)
                 try:
                     marked_rows = mark_document_in_sheet(
                         sheet_row_hashes=prepared["sheet_row_hashes"],

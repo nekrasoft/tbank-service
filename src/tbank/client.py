@@ -198,6 +198,60 @@ def send_invoice(
         return data
 
 
+def send_provided_services_act(
+    *,
+    document_number: str,
+    act_date: date,
+    buyer_name: str,
+    buyer_inn: str,
+    buyer_kpp: str,
+    items: list[dict[str, Any]],
+    email: str | list[str] | None = None,
+    contact_phone: str | None = None,
+    header_comment: str | None = None,
+) -> dict[str, Any]:
+    """Создать и отправить акт через POST /providedServicesAct/submit."""
+    buyer = {"name": buyer_name[:512], "inn": buyer_inn}
+    kpp = (buyer_kpp or "").strip()
+    if _KPP_RE.fullmatch(kpp):
+        buyer["kpp"] = kpp
+    payload: dict[str, Any] = {
+        "documentNumber": document_number,
+        "date": act_date.isoformat(),
+        "buyer": buyer,
+        "items": [
+            {
+                "name": str(item["name"])[:1000],
+                "price": float(item["price"]),
+                "unit": str(item.get("unit", "шт"))[:50],
+                "vat": str(item.get("vat", "None")),
+                "amount": float(item["amount"]),
+            }
+            for item in items
+        ],
+    }
+    contacts = [{"email": value} for value in _normalize_emails(email)]
+    if contacts:
+        payload["contacts"] = contacts
+    if contact_phone and re.fullmatch(r"\+7[0-9]{10}", contact_phone.strip()):
+        payload["contactPhone"] = contact_phone.strip()
+    if header_comment:
+        payload["headerComment"] = header_comment[:1000]
+    headers = {
+        "Authorization": f"Bearer {_get_token()}",
+        "X-Request-Id": str(uuid.uuid4()),
+    }
+    with httpx.Client(timeout=30.0) as client:
+        resp = client.post(
+            f"{_get_base_url()}/providedServicesAct/submit",
+            json=payload,
+            headers=headers,
+        )
+        resp.raise_for_status()
+        logger.info("T-Bank: акт %s создан", document_number)
+        return resp.json()
+
+
 def get_invoice_info(invoice_id: str) -> dict[str, Any]:
     """
     Получение информации о выставленном счёте.
