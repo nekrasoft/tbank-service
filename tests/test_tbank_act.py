@@ -44,8 +44,8 @@ def test_send_act_payload_and_errors(monkeypatch, status):
     }
 
 
-@pytest.mark.parametrize("failure", [None, "invoice", "save", "act"])
-def test_cron_creates_act_after_saved_invoice(monkeypatch, failure):
+@pytest.mark.parametrize("failure", [None, "invoice", "save"])
+def test_cron_act_creation_is_disabled(monkeypatch, failure):
     from src.cli import cron
     from src.notifications import bitrix_task, invoice_reminder_email, max as max_notifications, telegram
     from src.sheets import sync, writer
@@ -91,16 +91,9 @@ def test_cron_creates_act_after_saved_invoice(monkeypatch, failure):
     else:
         cron.main()
     assert [call[0] for call in events.mock_calls] == {
-        None: ["invoice", "save", "act"], "invoice": ["invoice"],
-        "save": ["invoice", "save"], "act": ["invoice", "save", "act"],
+        None: ["invoice", "save"], "invoice": ["invoice"],
+        "save": ["invoice", "save"],
     }[failure]
     assert failed_invoice.call_count == (1 if failure == "invoice" else 0)
-    assert notification.call_count == (1 if failure in (None, "act") else 0)
-    if failure in (None, "act"):
-        send_act.assert_called_once_with(
-            document_number="123", act_date=prepared["invoice_date"],
-            buyer_name=prepared["payer_name"], buyer_inn=prepared["payer_inn"],
-            buyer_kpp=prepared["payer_kpp"], items=prepared["items"],
-            email="debug@example.com", contact_phone=prepared["contact_phone"],
-            header_comment="К счёту №123 от 10.11.2026",
-        )
+    assert notification.call_count == (1 if failure is None else 0)
+    send_act.assert_not_called()
