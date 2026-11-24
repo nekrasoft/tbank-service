@@ -536,7 +536,7 @@ def _build_task_description(
     lines.extend(
         [
             "",
-            f"[B]Необходимо в [URL=https://business.tbank.ru/sme/invoices/outgoing/submitted]ТБанке[/URL] создать Акт и УПД для данного Счета и отправить все три документа в ЭДО{extra_file_suffix}[/B]",
+            f"[B]Необходимо в [URL=https://business.tbank.ru/sme/invoices/outgoing/submitted]ТБанке[/URL] создать Акт и УПД (ФОРМАЛИЗОВАННЫЙ СЧФДОП). для данного Счета и отправить все три документа в ЭДО{extra_file_suffix}[/B]",
             "",
             "[B]ВНИМАНИЕ:[/B] Для УПД обязательно указать \"Основание передачи\" - детали в аттаче.",
         ]
